@@ -26,6 +26,32 @@ describe Fiber::Profiler::Capture do
 		end
 	end
 	
+	with "#sample_rate" do
+		let(:profiler) {subject.new(stall_threshold: 0.0001, sample_rate: 0.1, output: output)}
+		
+		it "should return the sample rate" do
+			expect(profiler).to have_attributes(
+				sample_rate: be == 0.1
+			)
+		end
+		
+		it "should sample at the given rate" do
+			profiler.start
+			
+			100.times do
+				Fiber.new do
+					sleep 0.0001
+				end.resume
+			end
+			
+			profiler.stop
+			
+			expect(profiler).to have_attributes(
+				stalls: (be >= 1).and(be <= 50)
+			)
+		end
+	end
+	
 	it "should start profiling" do
 		profiler.start
 		
