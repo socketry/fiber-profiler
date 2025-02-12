@@ -7,8 +7,14 @@
 #include "fiber.h"
 #include "array.h"
 
+#include <_stdio.h>
+#include <ruby/io.h>
 #include <ruby/debug.h>
 #include <stdio.h>
+
+int Fiber_Profiler_capture_p = 0;
+float Fiber_Profiler_Capture_stall_threshold = 0.01;
+int Fiber_Profiler_Capture_track_calls = 1;
 
 VALUE Fiber_Profiler_Capture = Qnil;
 
@@ -28,10 +34,39 @@ struct Fiber_Profiler_Capture_Call {
 	struct Fiber_Profiler_Capture_Call *parent;
 };
 
+struct Fiber_Profiler_Stream {
+	FILE *file;
+	char *buffer;
+	size_t size;
+};
+
+void Fiber_Profiler_Stream_initialize(struct Fiber_Profiler_Stream *stream) {
+	stream->file = open_memstream(&stream->buffer, &stream->size);
+}
+
+void Fiber_Profiler_Stream_free(struct Fiber_Profiler_Stream *stream) {
+	if (stream->file) {
+		fclose(stream->file);
+		stream->file = NULL;
+	}
+	
+	if (stream->buffer) {
+		free(stream->buffer);
+		stream->buffer = NULL;
+	}
+}
+
+struct Fiber_Profiler_Capture;
+typedef void(*Fiber_Profiler_Stream_Print)(struct Fiber_Profiler_Capture*, FILE* restrict);
+
 struct Fiber_Profiler_Capture {
 	// Configuration:
-	float log_threshold;
+	double stall_threshold;
 	int track_calls;
+	
+	VALUE output;
+	Fiber_Profiler_Stream_Print print;
+	struct Fiber_Profiler_Stream stream;
 	
 	// Whether or not the profiler is currently running:
 	int running;
@@ -85,6 +120,8 @@ void Fiber_Profiler_Capture_Call_free(struct Fiber_Profiler_Capture_Call *call) 
 static void Fiber_Profiler_Capture_mark(void *ptr) {
 	struct Fiber_Profiler_Capture *profiler = (struct Fiber_Profiler_Capture*)ptr;
 	
+	rb_gc_mark_movable(profiler->output);
+	
 	// If `klass` is stored as a VALUE in calls, we need to mark them here:
 	for (size_t i = 0; i < profiler->calls.limit; i += 1) {
 		struct Fiber_Profiler_Capture_Call *call = profiler->calls.base[i];
@@ -94,6 +131,8 @@ static void Fiber_Profiler_Capture_mark(void *ptr) {
 
 static void Fiber_Profiler_Capture_compact(void *ptr) {
 	struct Fiber_Profiler_Capture *profiler = (struct Fiber_Profiler_Capture*)ptr;
+	
+	profiler->output = rb_gc_location(profiler->output);
 	
 	// If `klass` is stored as a VALUE in calls, we need to update their locations here:
 	for (size_t i = 0; i < profiler->calls.limit; i += 1) {
@@ -105,6 +144,7 @@ static void Fiber_Profiler_Capture_compact(void *ptr) {
 static void Fiber_Profiler_Capture_free(void *ptr) {
 	struct Fiber_Profiler_Capture *profiler = (struct Fiber_Profiler_Capture*)ptr;
 	
+	Fiber_Profiler_Stream_free(&profiler->stream);
 	Fiber_Profiler_Array_free(&profiler->calls);
 	
 	free(profiler);
@@ -132,15 +172,43 @@ struct Fiber_Profiler_Capture *Fiber_Profiler_Capture_get(VALUE self) {
 	return profiler;
 }
 
+int IO_istty(VALUE io) {
+	if (RB_TYPE_P(io, T_FILE)) {
+		int descriptor = rb_io_descriptor(io);
+		return isatty(descriptor);
+	}
+	
+	return 0;
+}
+
+void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *profiler, FILE *restrict stream);
+void Fiber_Profiler_Capture_print_json(struct Fiber_Profiler_Capture *profiler, FILE *restrict stream);
+
+static void Fiber_Profiler_Capture_output_set(struct Fiber_Profiler_Capture *profiler, VALUE output) {
+	profiler->output = output;
+	
+	if (IO_istty(profiler->output)) {
+		profiler->print = &Fiber_Profiler_Capture_print_tty;
+	} else {
+		profiler->print = &Fiber_Profiler_Capture_print_json;
+	}
+}
+
 VALUE Fiber_Profiler_Capture_allocate(VALUE klass) {
 	struct Fiber_Profiler_Capture *profiler = ALLOC(struct Fiber_Profiler_Capture);
 	
 	// Initialize the profiler state:
+	Fiber_Profiler_Capture_output_set(profiler, rb_stderr);	
+	Fiber_Profiler_Stream_initialize(&profiler->stream);
+	
 	profiler->running = 0;
 	profiler->capture = 0;
 	profiler->stalls = 0;
 	profiler->nesting = 0;
 	profiler->current = NULL;
+	
+	profiler->stall_threshold = Fiber_Profiler_Capture_stall_threshold;
+	profiler->track_calls = Fiber_Profiler_Capture_track_calls;
 	
 	profiler->calls.element_initialize = (void (*)(void*))Fiber_Profiler_Capture_Call_initialize;
 	profiler->calls.element_free = (void (*)(void*))Fiber_Profiler_Capture_Call_free;
@@ -149,76 +217,47 @@ VALUE Fiber_Profiler_Capture_allocate(VALUE klass) {
 	return TypedData_Wrap_Struct(klass, &Fiber_Profiler_Capture_Type, profiler);
 }
 
-int Fiber_Profiler_Capture_p(void) {
-	const char *enabled = getenv("Fiber_Profiler_Capture");
-	
-	if (enabled && strcmp(enabled, "true") == 0) {
-		return 1;
-	}
-	
-	return 0;
-}
-
-float Fiber_Profiler_Capture_default_log_threshold(void) {
-	const char *log_threshold = getenv("Fiber_Profiler_Capture_LOG_THRESHOLD");
-	
-	if (log_threshold) {
-		return strtof(log_threshold, NULL);
-	} else {
-		return 0.01;
-	}
-}
-
-int Fiber_Profiler_Capture_default_track_calls(void) {
-	const char *track_calls = getenv("Fiber_Profiler_Capture_TRACK_CALLS");
-	
-	if (track_calls && strcmp(track_calls, "false") == 0) {
-		return 0;
-	} else {
-		return 1;
-	}
-}
+ID Fiber_Profiler_Capture_initialize_options[3];
 
 VALUE Fiber_Profiler_Capture_initialize(int argc, VALUE *argv, VALUE self) {
 	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
-	VALUE log_threshold, track_calls;
 	
-	rb_scan_args(argc, argv, "02", &log_threshold, &track_calls);
+	VALUE options[3] = {0};
+	VALUE options_hash = Qnil;
+	rb_scan_args(argc, argv, ":", &options_hash);
+	rb_get_kwargs(options_hash, Fiber_Profiler_Capture_initialize_options, 0, 3, options);
 	
-	if (RB_NIL_P(log_threshold)) {
-		profiler->log_threshold = Fiber_Profiler_Capture_default_log_threshold();
-	} else {
-		profiler->log_threshold = NUM2DBL(log_threshold);
+	if (options[0] != Qnil) {
+		profiler->stall_threshold = NUM2DBL(options[0]);
 	}
 	
-	if (RB_NIL_P(track_calls)) {
-		profiler->track_calls = Fiber_Profiler_Capture_default_track_calls();
-	} else {
-		profiler->track_calls = RB_TEST(track_calls);
+	if (options[1] != Qnil) {
+		profiler->track_calls = RB_TEST(options[1]);
+	}
+	
+	if (options[2] != Qnil) {
+		Fiber_Profiler_Capture_output_set(profiler, options[2]);
 	}
 	
 	return self;
 }
 
 VALUE Fiber_Profiler_Capture_default(VALUE klass) {
-	if (!Fiber_Profiler_Capture_p()) {
+	if (!Fiber_Profiler_capture_p) {
 		return Qnil;
 	}
 	
 	VALUE profiler = Fiber_Profiler_Capture_allocate(klass);
-	
-	struct Fiber_Profiler_Capture *profiler_data = Fiber_Profiler_Capture_get(profiler);
-	profiler_data->log_threshold = Fiber_Profiler_Capture_default_log_threshold();
-	profiler_data->track_calls = Fiber_Profiler_Capture_default_track_calls();
+	Fiber_Profiler_Capture_initialize(0, NULL, profiler);
 	
 	return profiler;
 }
 
-VALUE Fiber_Profiler_Capture_new(float log_threshold, int track_calls) {
+VALUE Fiber_Profiler_Capture_new(float stall_threshold, int track_calls) {
 	VALUE profiler = Fiber_Profiler_Capture_allocate(Fiber_Profiler_Capture);
 	
 	struct Fiber_Profiler_Capture *profiler_data = Fiber_Profiler_Capture_get(profiler);
-	profiler_data->log_threshold = log_threshold;
+	profiler_data->stall_threshold = stall_threshold;
 	profiler_data->track_calls = track_calls;
 	
 	return profiler;
@@ -365,8 +404,6 @@ static inline float Fiber_Profiler_Capture_duration(struct Fiber_Profiler_Captur
 	return Fiber_Profiler_Time_duration(&duration);
 }
 
-void Fiber_Profiler_Capture_print(struct Fiber_Profiler_Capture *profiler, FILE *restrict stream);
-
 void Fiber_Profiler_Capture_finish(struct Fiber_Profiler_Capture *profiler) {
 	profiler->capture = 0;
 	
@@ -378,6 +415,8 @@ void Fiber_Profiler_Capture_finish(struct Fiber_Profiler_Capture *profiler) {
 	}
 }
 
+void Fiber_Profiler_Capture_print(struct Fiber_Profiler_Capture *profiler);
+
 void Fiber_Profiler_Capture_fiber_switch(struct Fiber_Profiler_Capture *profiler)
 {
 	float duration = Fiber_Profiler_Capture_duration(profiler);
@@ -385,9 +424,9 @@ void Fiber_Profiler_Capture_fiber_switch(struct Fiber_Profiler_Capture *profiler
 	if (profiler->capture) {
 		Fiber_Profiler_Capture_finish(profiler);
 		
-		if (duration > profiler->log_threshold) {
+		if (duration > profiler->stall_threshold) {
 			profiler->stalls += 1;
-			Fiber_Profiler_Capture_print(profiler, stderr);
+			Fiber_Profiler_Capture_print(profiler);
 		}
 	}
 	
@@ -478,21 +517,79 @@ void Fiber_Profiler_Capture_print_json(struct Fiber_Profiler_Capture *profiler, 
 	fprintf(stream, "}\n");
 }
 
-void Fiber_Profiler_Capture_print(struct Fiber_Profiler_Capture *profiler, FILE *restrict stream) {
-	if (isatty(fileno(stream))) {
-		Fiber_Profiler_Capture_print_tty(profiler, stream);
-	} else {
-		Fiber_Profiler_Capture_print_json(profiler, stream);
-	}
+void Fiber_Profiler_Capture_print(struct Fiber_Profiler_Capture *profiler) {
+	FILE *stream = profiler->stream.file;
+	profiler->print(profiler, stream);
+	fflush(stream);
+	
+	rb_io_write(profiler->output, rb_str_new_static(profiler->stream.buffer, profiler->stream.size));
+	
+	fseek(stream, 0, SEEK_SET);
 }
 
-VALUE Fiber_Profiler_Capture_stalls(VALUE self) {
+#pragma mark - Accessors
+
+static VALUE Fiber_Profiler_Capture_stall_threshold_get(VALUE self) {
+	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
+	
+	return DBL2NUM(profiler->stall_threshold);
+}
+
+static VALUE Fiber_Profiler_Capture_track_calls_get(VALUE self) {
+	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
+	
+	return profiler->track_calls ? Qtrue : Qfalse;
+}
+
+static VALUE Fiber_Profiler_Capture_stalls_get(VALUE self) {
 	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
 	
 	return SIZET2NUM(profiler->stalls);
 }
 
+#pragma mark - Environment Variables
+
+static int FIBER_PROFILER_CAPTURE() {
+	const char *value = getenv("FIBER_PROFILER_CAPTURE");
+	
+	if (value && strcmp(value, "true") == 0) {
+		return 1;
+	} else {
+		return 0;
+	}
+}
+
+static float FIBER_PROFILER_CAPTURE_STALL_THRESHOLD() {
+	const char *value = getenv("FIBER_PROFILER_CAPTURE_STALL_THRESHOLD");
+	
+	if (value) {
+		return atof(value);
+	} else {
+		return 0.01;
+	}
+}
+
+static int FIBER_PROFILER_CAPTURE_TRACK_CALLS() {
+	const char *value = getenv("FIBER_PROFILER_CAPTURE_TRACK_CALLS");
+	
+	if (value && strcmp(value, "false") == 0) {
+		return 0;
+	} else {
+		return 1;
+	}
+}
+
+#pragma mark - Initialization
+
 void Init_Fiber_Profiler_Capture(VALUE Fiber_Profiler) {
+	Fiber_Profiler_capture_p = FIBER_PROFILER_CAPTURE();
+	Fiber_Profiler_Capture_stall_threshold = FIBER_PROFILER_CAPTURE_STALL_THRESHOLD();
+	Fiber_Profiler_Capture_track_calls = FIBER_PROFILER_CAPTURE_TRACK_CALLS();
+	
+	Fiber_Profiler_Capture_initialize_options[0] = rb_intern("stall_threshold");
+	Fiber_Profiler_Capture_initialize_options[1] = rb_intern("track_calls");
+	Fiber_Profiler_Capture_initialize_options[2] = rb_intern("output");
+	
 	Fiber_Profiler_Capture = rb_define_class_under(Fiber_Profiler, "Capture", rb_cObject);
 	rb_define_alloc_func(Fiber_Profiler_Capture, Fiber_Profiler_Capture_allocate);
 	
@@ -503,5 +600,9 @@ void Init_Fiber_Profiler_Capture(VALUE Fiber_Profiler) {
 	rb_define_method(Fiber_Profiler_Capture, "start", Fiber_Profiler_Capture_start, 0);
 	rb_define_method(Fiber_Profiler_Capture, "stop", Fiber_Profiler_Capture_stop, 0);
 	
-	rb_define_method(Fiber_Profiler_Capture, "stalls", Fiber_Profiler_Capture_stalls, 0);
+	rb_define_method(Fiber_Profiler_Capture, "stall_threshold", Fiber_Profiler_Capture_stall_threshold_get, 0);
+	rb_define_method(Fiber_Profiler_Capture, "track_calls", Fiber_Profiler_Capture_track_calls_get, 0);
+	rb_define_method(Fiber_Profiler_Capture, "stalls", Fiber_Profiler_Capture_stalls_get, 0);
+	
+	rb_define_singleton_method(Fiber_Profiler_Capture, "default", Fiber_Profiler_Capture_default, 0);
 }

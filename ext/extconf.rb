@@ -21,6 +21,7 @@ $srcs = ["fiber/profiler/profiler.c", "fiber/profiler/time.c", "fiber/profiler/f
 $VPATH << "$(srcdir)/fiber/profiler"
 
 have_func("rb_fiber_current")
+have_func("rb_ext_ractor_safe")
 
 if ENV.key?("RUBY_SANITIZE")
 	$stderr.puts "Enabling sanitizers..."
