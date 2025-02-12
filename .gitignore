@@ -11,3 +11,4 @@
 /ext/**/*.so
 /ext/**/*.bundle
 /ext/**/*.dSYM
+/ext/**/*.time
