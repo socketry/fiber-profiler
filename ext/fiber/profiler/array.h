@@ -8,17 +8,14 @@
 #include <errno.h>
 #include <assert.h>
 
-static const size_t Fiber_Profiler_ARRAY_MAXIMUM_COUNT = SIZE_MAX / sizeof(void*);
-static const size_t Fiber_Profiler_ARRAY_DEFAULT_COUNT = 128;
-
 struct Fiber_Profiler_Array {
-	// The array of pointers to elements:
-	void **base;
+	// The array of elements:
+	void *base;
 	
-	// The allocated size of the array:
+	// The allocated size of the array in elements
 	size_t count;
 	
-	// The biggest item we've seen so far:
+	// The biggest element index that has been used:
 	size_t limit;
 	
 	// The size of each element that is allocated:
@@ -28,51 +25,42 @@ struct Fiber_Profiler_Array {
 	void (*element_free)(void*);
 };
 
-inline static int Fiber_Profiler_Array_initialize(struct Fiber_Profiler_Array *array, size_t count, size_t element_size)
+inline static int Fiber_Profiler_Array_initialize(struct Fiber_Profiler_Array *array, size_t element_size)
 {
+	array->base = NULL;
+	array->count = 0;
+	
 	array->limit = 0;
 	array->element_size = element_size;
 	
-	if (count) {
-		array->base = (void**)calloc(count, sizeof(void*));
-		
-		if (array->base == NULL) {
-			return -1;
-		}
-		
-		array->count = count;
-		
-		return 1;
-	} else {
-		array->base = NULL;
-		array->count = 0;
-		
-		return 0;
-	}
+	return 0;
 }
 
 inline static size_t Fiber_Profiler_Array_memory_size(const struct Fiber_Profiler_Array *array)
 {
 	// Upper bound.
-	return array->count * (sizeof(void*) + array->element_size);
+	return array->count * array->element_size;
+}
+
+void *Fiber_Profiler_Array_get(void *base, size_t index, size_t element_size)
+{
+	return (void*)((char *)base + (index * element_size));
 }
 
 inline static void Fiber_Profiler_Array_free(struct Fiber_Profiler_Array *array)
 {
 	if (array->base) {
-		void **base = array->base;
+		void *base = array->base;
 		size_t limit = array->limit;
 		
 		array->base = NULL;
 		array->count = 0;
 		array->limit = 0;
 		
-		for (size_t i = 0; i < limit; i += 1) {
-			void *element = base[i];
-			if (element) {
+		if (array->element_free) {
+			for (size_t i = 0; i < limit; i += 1) {
+				void *element = Fiber_Profiler_Array_get(base, i, array->element_size);
 				array->element_free(element);
-				
-				free(element);
 			}
 		}
 		
@@ -87,7 +75,9 @@ inline static int Fiber_Profiler_Array_resize(struct Fiber_Profiler_Array *array
 		return 0;
 	}
 	
-	if (count > Fiber_Profiler_ARRAY_MAXIMUM_COUNT) {
+	size_t maximum_count = UINTPTR_MAX / array->element_size;
+	
+	if (count > maximum_count) {
 		errno = ENOMEM;
 		return -1;
 	}
@@ -95,11 +85,16 @@ inline static int Fiber_Profiler_Array_resize(struct Fiber_Profiler_Array *array
 	size_t new_count = array->count;
 	
 	// If the array is empty, we need to set the initial size:
-	if (new_count == 0) new_count = Fiber_Profiler_ARRAY_DEFAULT_COUNT;
+	if (new_count == 0) {
+		size_t page_size = sysconf(_SC_PAGESIZE);
+		while (page_size < array->element_size) page_size *= 2;
+		new_count = page_size / array->element_size;
+	}
+	
 	else while (new_count < count) {
 		// Ensure we don't overflow:
-		if (new_count > (Fiber_Profiler_ARRAY_MAXIMUM_COUNT / 2)) {
-			new_count = Fiber_Profiler_ARRAY_MAXIMUM_COUNT;
+		if (new_count > (maximum_count / 2)) {
+			new_count = maximum_count;
 			break;
 		}
 		
@@ -107,86 +102,90 @@ inline static int Fiber_Profiler_Array_resize(struct Fiber_Profiler_Array *array
 		new_count *= 2;
 	}
 	
-	void **new_base = (void**)realloc(array->base, new_count * sizeof(void*));
+	void **new_base = (void**)realloc(array->base, new_count * array->element_size);
 	
 	if (new_base == NULL) {
 		return -1;
 	}
 	
 	// Zero out the new memory:
-	memset(new_base + array->count, 0, (new_count - array->count) * sizeof(void*));
+	memset((void*)((char*)new_base + array->count * array->element_size), 0, (new_count - array->count) * array->element_size);
 	
 	array->base = (void**)new_base;
 	array->count = new_count;
 	
-	// Resizing sucessful:
+	// Resizing successful:
 	return 1;
 }
 
-inline static void* Fiber_Profiler_Array_lookup(struct Fiber_Profiler_Array *array, size_t index)
+void Fiber_Profiler_Array_truncate(struct Fiber_Profiler_Array *array, size_t count)
 {
-	size_t count = index + 1;
-	
-	// Resize the array if necessary:
-	if (count > array->count) {
-		if (Fiber_Profiler_Array_resize(array, count) == -1) {
+	if (count < array->limit) {
+		if (array->element_free) {
+			for (size_t i = count; i < array->limit; i += 1) {
+				void *element = Fiber_Profiler_Array_get(array->base, i, array->element_size);
+				if (element) {
+					array->element_free(element);
+				}
+			}
+		}
+		
+		array->limit = count;
+	}
+}
+
+void *Fiber_Profiler_Array_lookup(struct Fiber_Profiler_Array *array, size_t index)
+{
+	if (index < array->limit) {
+		return Fiber_Profiler_Array_get(array->base, index, array->element_size);
+	} else {
+		return NULL;
+	}
+}
+
+void *Fiber_Profiler_Array_push(struct Fiber_Profiler_Array *array)
+{
+	if (array->limit == array->count) {
+		int result = Fiber_Profiler_Array_resize(array, array->count + 1);
+		
+		if (result < 0) {
 			return NULL;
 		}
 	}
 	
-	// Get the element:
-	void **element = array->base + index;
+	void *element = Fiber_Profiler_Array_get(array->base, array->limit, array->element_size);
 	
-	// Allocate the element if it doesn't exist:
-	if (*element == NULL) {
-		*element = malloc(array->element_size);
-		assert(*element);
-		
-		if (array->element_initialize) {
-			array->element_initialize(*element);
-		}
-		
-		// Update the limit:
-		if (count > array->limit) array->limit = count;
+	if (array->element_initialize) {
+		array->element_initialize(element);
 	}
 	
-	return *element;
+	array->limit += 1;
+	
+	return element;
 }
 
-inline static void* Fiber_Profiler_Array_last(struct Fiber_Profiler_Array *array)
+void *Fiber_Profiler_Array_pop(struct Fiber_Profiler_Array *array)
 {
-	if (array->limit == 0) return NULL;
-	else return array->base[array->limit - 1];
-}
-
-inline static void Fiber_Profiler_Array_truncate(struct Fiber_Profiler_Array *array, size_t limit)
-{
-	if (limit < array->limit) {
-		for (size_t i = limit; i < array->limit; i += 1) {
-			void **element = array->base + i;
-			if (*element) {
-				array->element_free(*element);
-				free(*element);
-				*element = NULL;
-			}
+	if (array->limit > 0) {
+		array->limit -= 1;
+		
+		void *element = Fiber_Profiler_Array_get(array->base, array->limit, array->element_size);
+		
+		if (array->element_free) {
+			array->element_free(element);
 		}
 		
-		array->limit = limit;
+		return element;
+	} else {
+		return NULL;
 	}
 }
 
-// Push a new element onto the end of the array.
-inline static void* Fiber_Profiler_Array_push(struct Fiber_Profiler_Array *array)
+void *Fiber_Profiler_Array_last(struct Fiber_Profiler_Array *array)
 {
-	return Fiber_Profiler_Array_lookup(array, array->limit);
-}
-
-inline static void Fiber_Profiler_Array_each(struct Fiber_Profiler_Array *array, void (*callback)(void*))
-{
-	for (size_t i = 0; i < array->limit; i += 1) {
-		void *element = array->base[i];
-		if (element) {
-			callback(element);
-		}
+	if (array->limit > 0) {
+		return Fiber_Profiler_Array_get(array->base, array->limit - 1, array->element_size);
+	} else {
+		return NULL;
 	}
 }

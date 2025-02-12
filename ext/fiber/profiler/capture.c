@@ -12,6 +12,10 @@
 #include <ruby/debug.h>
 #include <stdio.h>
 
+enum {
+	DEBUG_SKIPPED = 1,
+};
+
 int Fiber_Profiler_capture_p = 0;
 double Fiber_Profiler_Capture_stall_threshold = 0.01;
 int Fiber_Profiler_Capture_track_calls = 1;
@@ -65,6 +69,9 @@ struct Fiber_Profiler_Capture {
 	double stall_threshold;
 	int track_calls;
 	double sample_rate;
+	
+	// Calls that are shorter than this filter threshold will be ignored:
+	double filter_threshold;
 	
 	VALUE output;
 	Fiber_Profiler_Stream_Print print;
@@ -126,7 +133,7 @@ static void Fiber_Profiler_Capture_mark(void *ptr) {
 	
 	// If `klass` is stored as a VALUE in calls, we need to mark them here:
 	for (size_t i = 0; i < profiler->calls.limit; i += 1) {
-		struct Fiber_Profiler_Capture_Call *call = profiler->calls.base[i];
+		struct Fiber_Profiler_Capture_Call *call = Fiber_Profiler_Array_lookup(&profiler->calls, i);
 		rb_gc_mark_movable(call->klass);
 	}
 }
@@ -138,7 +145,7 @@ static void Fiber_Profiler_Capture_compact(void *ptr) {
 	
 	// If `klass` is stored as a VALUE in calls, we need to update their locations here:
 	for (size_t i = 0; i < profiler->calls.limit; i += 1) {
-			struct Fiber_Profiler_Capture_Call *call = profiler->calls.base[i];
+			struct Fiber_Profiler_Capture_Call *call = Fiber_Profiler_Array_lookup(&profiler->calls, i);
 			call->klass = rb_gc_location(call->klass);
 	}
 }
@@ -213,9 +220,12 @@ VALUE Fiber_Profiler_Capture_allocate(VALUE klass) {
 	profiler->track_calls = Fiber_Profiler_Capture_track_calls;
 	profiler->sample_rate = Fiber_Profiler_Capture_sample_rate;
 	
+	// Filter calls that are less than 1% of the stall threshold:
+	profiler->filter_threshold = profiler->stall_threshold * 0.01;
+	
 	profiler->calls.element_initialize = (void (*)(void*))Fiber_Profiler_Capture_Call_initialize;
 	profiler->calls.element_free = (void (*)(void*))Fiber_Profiler_Capture_Call_free;
-	Fiber_Profiler_Array_initialize(&profiler->calls, 0, sizeof(struct Fiber_Profiler_Capture_Call));
+	Fiber_Profiler_Array_initialize(&profiler->calls, sizeof(struct Fiber_Profiler_Capture_Call));
 	
 	return TypedData_Wrap_Struct(klass, &Fiber_Profiler_Capture_Type, profiler);
 }
@@ -348,7 +358,11 @@ static void Fiber_Profiler_Capture_callback(rb_event_flag_t event_flag, VALUE da
 		if (profiler->nesting > 0)
 			profiler->nesting -= 1;
 		
-		// If the call was < 0.01% of the total time, we can ignore it:
+		// If the call was < 1% of the stall threshold, we can ignore it:
+		double duration = Fiber_Profiler_Time_delta(&call->enter_time, &call->exit_time);
+		if (duration < profiler->filter_threshold) {
+			Fiber_Profiler_Array_pop(&profiler->calls);
+		}
 	}
 }
 
@@ -461,14 +475,19 @@ void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *profiler, F
 	size_t skipped = 0;
 	
 	for (size_t i = 0; i < profiler->calls.limit; i += 1) {
-		struct Fiber_Profiler_Capture_Call *call = profiler->calls.base[i];
+		struct Fiber_Profiler_Capture_Call *call = Fiber_Profiler_Array_lookup(&profiler->calls, i);
 		struct timespec duration = {};
 		Fiber_Profiler_Time_elapsed(&call->enter_time, &call->exit_time, &duration);
 		
 		// Skip calls that are too short to be meaningful:
 		if (Fiber_Profiler_Time_proportion(&duration, &total_duration) < Fiber_Profiler_Capture_PRINT_MINIMUM_PROPORTION) {
-			skipped += 1;
-			continue;
+			
+			if (!DEBUG_SKIPPED) {
+				skipped += 1;
+				continue;
+			} else {
+				fprintf(stream, "\e[2m");
+			}
 		}
 		
 		for (size_t i = 0; i < call->nesting; i += 1) {
@@ -479,6 +498,10 @@ void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *profiler, F
 		const char *name = rb_id2name(call->id);
 		
 		fprintf(stream, "%s:%d in %s '%s#%s' (" Fiber_Profiler_TIME_PRINTF_TIMESPEC "s)\n", call->path, call->line, event_flag_name(call->event_flag), RSTRING_PTR(class_inspect), name, Fiber_Profiler_TIME_PRINTF_TIMESPEC_ARGUMENTS(duration));
+		
+		if (DEBUG_SKIPPED) {
+			fprintf(stream, "\e[0m");
+		}
 	}
 	
 	if (skipped > 0) {
@@ -500,7 +523,7 @@ void Fiber_Profiler_Capture_print_json(struct Fiber_Profiler_Capture *profiler, 
 	int first = 1;
 	
 	for (size_t i = 0; i < profiler->calls.limit; i += 1) {
-		struct Fiber_Profiler_Capture_Call *call = profiler->calls.base[i];
+		struct Fiber_Profiler_Capture_Call *call = Fiber_Profiler_Array_lookup(&profiler->calls, i);
 		struct timespec duration = {};
 		Fiber_Profiler_Time_elapsed(&call->enter_time, &call->exit_time, &duration);
 		

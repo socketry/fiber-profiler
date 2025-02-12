@@ -25,3 +25,5 @@ group :test do
 	gem "bake-test-external"
 	gem "async"
 end
+
+gem "process-metrics"
