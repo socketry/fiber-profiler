@@ -588,7 +588,7 @@ static VALUE Fiber_Profiler_Capture_sample_rate_get(VALUE self) {
 
 #pragma mark - Environment Variables
 
-static int FIBER_PROFILER_CAPTURE() {
+static int FIBER_PROFILER_CAPTURE(void) {
 	const char *value = getenv("FIBER_PROFILER_CAPTURE");
 	
 	if (value && strcmp(value, "true") == 0) {
@@ -598,7 +598,7 @@ static int FIBER_PROFILER_CAPTURE() {
 	}
 }
 
-static double FIBER_PROFILER_CAPTURE_STALL_THRESHOLD() {
+static double FIBER_PROFILER_CAPTURE_STALL_THRESHOLD(void) {
 	const char *value = getenv("FIBER_PROFILER_CAPTURE_STALL_THRESHOLD");
 	
 	if (value) {
@@ -608,7 +608,7 @@ static double FIBER_PROFILER_CAPTURE_STALL_THRESHOLD() {
 	}
 }
 
-static int FIBER_PROFILER_CAPTURE_TRACK_CALLS() {
+static int FIBER_PROFILER_CAPTURE_TRACK_CALLS(void) {
 	const char *value = getenv("FIBER_PROFILER_CAPTURE_TRACK_CALLS");
 	
 	if (value && strcmp(value, "false") == 0) {
@@ -618,7 +618,7 @@ static int FIBER_PROFILER_CAPTURE_TRACK_CALLS() {
 	}
 }
 
-static double FIBER_PROFILER_CAPTURE_SAMPLE_RATE() {
+static double FIBER_PROFILER_CAPTURE_SAMPLE_RATE(void) {
 	const char *value = getenv("FIBER_PROFILER_CAPTURE_SAMPLE_RATE");
 	
 	if (value) {
