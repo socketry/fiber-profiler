@@ -52,30 +52,66 @@ describe Fiber::Profiler::Capture do
 		end
 	end
 	
-	it "should start profiling" do
-		profiler.start
+	with "#start" do
+		it "should start profiling" do
+			profiler.start
+			
+			Fiber.new do
+				sleep 0.0001
+			end.resume
+			
+			profiler.stop
+			
+			expect(profiler).to have_attributes(
+				stalls: be >= 1
+			)
+			
+			stall = JSON.parse(output.string)
+			expect(stall).to have_keys(
+				"duration" => be >= 0.0001,
+			)
+			
+			calls = stall["calls"]
+			expect(calls[0]).to have_keys(
+				"path" => be == __FILE__,
+				"line" => be > 0,
+				"class" => be == "Kernel",
+				"method" => be == "sleep",
+			)
+		end
 		
-		Fiber.new do
-			sleep 0.0001
-		end.resume
+		def nested(n = 100, &block)
+			if n == 0
+				return yield
+			end
+			
+			return nested(n - 1, &block)
+		end
 		
-		profiler.stop
-		
-		expect(profiler).to have_attributes(
-			stalls: be >= 1
-		)
-		
-		stall = JSON.parse(output.string)
-		expect(stall).to have_keys(
-			"duration" => be >= 0.0001,
-		)
-		
-		calls = stall["calls"]
-		expect(calls[0]).to have_keys(
-			"path" => be == __FILE__,
-			"line" => be > 0,
-			"class" => be == "Kernel",
-			"method" => be == "sleep",
-		)
+		it "can profile more complex call stacks" do
+			profiler.start
+			
+			2.times do
+				Fiber.new do
+					nested(100) do
+						# Nothing
+					end
+					
+					nested(10) do
+						sleep 0.01
+					end
+					
+					nested(100) do
+						# Nothing
+					end
+				end.resume
+			end
+			
+			profiler.stop
+			
+			expect(profiler).to have_attributes(
+				stalls: be == 2
+			)
+		end
 	end
 end
