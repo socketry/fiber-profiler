@@ -113,5 +113,26 @@ describe Fiber::Profiler::Capture do
 				stalls: be == 2
 			)
 		end
+		
+		it "can detect garbage collection stalls" do
+			profiler.start
+			
+			Fiber.new do
+				GC.start
+				sleep(0.0001)
+			end.resume
+			
+			profiler.stop
+			
+			expect(profiler).to have_attributes(
+				stalls: be == 1
+			)
+			
+			stall = JSON.parse(output.string)
+			calls = stall["calls"]
+			expect(calls[0]).to have_keys(
+				"path" => be =~ /internal:gc/,
+			)
+		end
 	end
 end
