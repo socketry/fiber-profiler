@@ -211,9 +211,8 @@ VALUE Fiber_Profiler_Capture_allocate(VALUE klass) {
 	struct Fiber_Profiler_Capture *profiler = ALLOC(struct Fiber_Profiler_Capture);
 	
 	// Initialize the profiler state:
-	Fiber_Profiler_Capture_output_set(profiler, rb_stderr);	
 	Fiber_Profiler_Stream_initialize(&profiler->stream);
-	
+	profiler->output = Qnil;
 	profiler->running = 0;
 	profiler->capture = 0;
 	profiler->stalls = 0;
@@ -258,6 +257,9 @@ VALUE Fiber_Profiler_Capture_initialize(int argc, VALUE *argv, VALUE self) {
 	
 	if (arguments[3] != Qundef) {
 		Fiber_Profiler_Capture_output_set(profiler, arguments[3]);
+	} else {
+		// Initialize the profiler output - we dup `rb_stderr` because the profiler may otherwise run into synchronization issues with other uses of `rb_stderr`:
+		Fiber_Profiler_Capture_output_set(profiler, rb_obj_dup(rb_stderr));
 	}
 	
 	return self;
@@ -560,6 +562,8 @@ void Fiber_Profiler_Capture_print_json(struct Fiber_Profiler_Capture *profiler, 
 }
 
 void Fiber_Profiler_Capture_print(struct Fiber_Profiler_Capture *profiler) {
+	if (profiler->output == Qnil) return;
+	
 	FILE *stream = profiler->stream.file;
 	profiler->print(profiler, stream);
 	fflush(stream);
