@@ -16,7 +16,7 @@ def nested(n = 100, &block)
 	return nested(n - 1, &block)
 end
 
-2.times do
+500.times do
 	Fiber.new do
 		nested(5) do
 			GC.start
@@ -32,10 +32,25 @@ end
 	end.resume
 end
 
-profiler&.stop
+def format_memory(size_kb)
+	if size_kb < 1024
+		return "#{size_kb} KB"
+	end
+	
+	size_mb = size_kb / 1024
+	if size_mb < 1024
+		return "#{size_mb} MB"
+	end
+	
+	size_gb = size_mb / 1024
+	return "#{size_gb} GB"
+end
 
 if profiler
 	puts "Stalls: #{profiler.stalls}"
-	general = Process::Metrics::General.capture(pid: Process.pid)
-	puts general
+	memory = Process::Metrics::Memory.capture([Process.pid])
+	puts memory
+	puts format_memory(memory.total_size)
 end
+
+profiler&.stop
