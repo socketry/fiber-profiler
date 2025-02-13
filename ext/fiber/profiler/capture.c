@@ -104,7 +104,9 @@ void Fiber_Profiler_Capture_reset(struct Fiber_Profiler_Capture *profiler) {
 	Fiber_Profiler_Array_truncate(&profiler->calls, 0);
 }
 
-void Fiber_Profiler_Capture_Call_initialize(struct Fiber_Profiler_Capture_Call *call) {
+void Fiber_Profiler_Capture_Call_initialize(void *element) {
+	struct Fiber_Profiler_Capture_Call *call = element;
+	
 	call->enter_time.tv_sec = 0;
 	call->enter_time.tv_nsec = 0;
 	call->exit_time.tv_sec = 0;
@@ -119,7 +121,9 @@ void Fiber_Profiler_Capture_Call_initialize(struct Fiber_Profiler_Capture_Call *
 	call->line = 0;
 }
 
-void Fiber_Profiler_Capture_Call_free(struct Fiber_Profiler_Capture_Call *call) {
+void Fiber_Profiler_Capture_Call_free(void *element) {
+	struct Fiber_Profiler_Capture_Call *call = element;
+	
 	if (call->path) {
 		free((void*)call->path);
 		call->path = NULL;
