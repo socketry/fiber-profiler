@@ -13,7 +13,7 @@
 #include <stdio.h>
 
 enum {
-	DEBUG_SKIPPED = 1,
+	DEBUG_SKIPPED = 0,
 };
 
 int Fiber_Profiler_capture_p = 0;
