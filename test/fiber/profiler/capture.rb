@@ -93,15 +93,15 @@ describe Fiber::Profiler::Capture do
 			
 			2.times do
 				Fiber.new do
-					nested(100) do
+					nested(1000) do
 						# Nothing
 					end
 					
-					nested(10) do
+					nested(1000) do
 						sleep 0.01
 					end
 					
-					nested(100) do
+					nested(1000) do
 						# Nothing
 					end
 				end.resume
