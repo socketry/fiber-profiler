@@ -139,6 +139,8 @@ inline static void Fiber_Profiler_Deque_debug(struct Fiber_Profiler_Deque *deque
 	struct Fiber_Profiler_Deque_Page *page = deque->head;
 	
 	while (page) {
+		// fprintf(stderr, "Fiber_Profiler_Deque: %s: page=%p, size=%lu, capacity=%lu\n", operation, page, page->size, page->capacity);
+		
 		RUBY_ASSERT(page->size <= page->capacity);
 		
 		RUBY_ASSERT(page->head == NULL || page->head->tail == page);
@@ -165,7 +167,9 @@ void Fiber_Profiler_Deque_truncate(struct Fiber_Profiler_Deque *deque)
 
 inline static size_t Fiber_Profiler_Deque_default_capacity(struct Fiber_Profiler_Deque *deque)
 {
-	return 1024;
+	static const size_t target_size = 4096*8;
+	
+	return (target_size - sizeof(struct Fiber_Profiler_Deque_Page)) / deque->element_size;
 }
 
 void *Fiber_Profiler_Deque_push(struct Fiber_Profiler_Deque *deque)
@@ -199,13 +203,13 @@ void *Fiber_Profiler_Deque_push(struct Fiber_Profiler_Deque *deque)
 		}
 	}
 	
-	void *element = Fiber_Profiler_Deque_Page_get(page, page->size, deque->element_size);
+	// Push a new element:
+	page->size += 1;
+	void *element = Fiber_Profiler_Deque_Page_get(page, page->size - 1, deque->element_size);
 	
 	if (deque->element_initialize) {
 		deque->element_initialize(element);
 	}
-	
-	page->size += 1;
 	
 	if (Fiber_Profiler_Deque_DEBUG) Fiber_Profiler_Deque_debug(deque, __FUNCTION__);
 	
@@ -229,9 +233,10 @@ inline static void *Fiber_Profiler_Deque_pop(struct Fiber_Profiler_Deque *deque)
 	}
 	
 	deque->tail = page;
-	page->size -= 1;
 	
-	void *element = Fiber_Profiler_Deque_Page_get(page, page->size, deque->element_size);
+	// Pop the last element:
+	void *element = Fiber_Profiler_Deque_Page_get(page, page->size - 1, deque->element_size);
+	page->size -= 1;
 	
 	if (deque->element_free) {
 		deque->element_free(element);
