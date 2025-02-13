@@ -5,7 +5,7 @@
 
 #include "time.h"
 #include "fiber.h"
-#include "array.h"
+#include "deque.h"
 
 #include <stdio.h>
 #include <ruby/io.h>
@@ -95,13 +95,13 @@ struct Fiber_Profiler_Capture {
 	// The current call frame:
 	struct Fiber_Profiler_Capture_Call *current;
 	
-	struct Fiber_Profiler_Array calls;
+	struct Fiber_Profiler_Deque calls;
 };
 
 void Fiber_Profiler_Capture_reset(struct Fiber_Profiler_Capture *profiler) {
 	profiler->nesting = 0;
 	profiler->current = NULL;
-	Fiber_Profiler_Array_truncate(&profiler->calls, 0);
+	Fiber_Profiler_Deque_truncate(&profiler->calls);
 }
 
 void Fiber_Profiler_Capture_Call_initialize(void *element) {
@@ -136,8 +136,7 @@ static void Fiber_Profiler_Capture_mark(void *ptr) {
 	rb_gc_mark_movable(profiler->output);
 	
 	// If `klass` is stored as a VALUE in calls, we need to mark them here:
-	for (size_t i = 0; i < profiler->calls.limit; i += 1) {
-		struct Fiber_Profiler_Capture_Call *call = Fiber_Profiler_Array_lookup(&profiler->calls, i);
+	Fiber_Profiler_Deque_each(&profiler->calls, struct Fiber_Profiler_Capture_Call, call) {
 		rb_gc_mark_movable(call->klass);
 	}
 }
@@ -148,9 +147,8 @@ static void Fiber_Profiler_Capture_compact(void *ptr) {
 	profiler->output = rb_gc_location(profiler->output);
 	
 	// If `klass` is stored as a VALUE in calls, we need to update their locations here:
-	for (size_t i = 0; i < profiler->calls.limit; i += 1) {
-			struct Fiber_Profiler_Capture_Call *call = Fiber_Profiler_Array_lookup(&profiler->calls, i);
-			call->klass = rb_gc_location(call->klass);
+	Fiber_Profiler_Deque_each(&profiler->calls, struct Fiber_Profiler_Capture_Call, call) {
+		call->klass = rb_gc_location(call->klass);
 	}
 }
 
@@ -160,14 +158,14 @@ static void Fiber_Profiler_Capture_free(void *ptr) {
 	RUBY_ASSERT(profiler->running == 0);
 	
 	Fiber_Profiler_Stream_free(&profiler->stream);
-	Fiber_Profiler_Array_free(&profiler->calls);
+	Fiber_Profiler_Deque_free(&profiler->calls);
 	
 	free(profiler);
 }
 
 static size_t Fiber_Profiler_Capture_memsize(const void *ptr) {
 	const struct Fiber_Profiler_Capture *profiler = (const struct Fiber_Profiler_Capture*)ptr;
-	return sizeof(*profiler) + Fiber_Profiler_Array_memory_size(&profiler->calls);
+	return sizeof(*profiler) + Fiber_Profiler_Deque_memory_size(&profiler->calls);
 }
 
 const rb_data_type_t Fiber_Profiler_Capture_Type = {
@@ -231,7 +229,7 @@ VALUE Fiber_Profiler_Capture_allocate(VALUE klass) {
 	
 	profiler->calls.element_initialize = (void (*)(void*))Fiber_Profiler_Capture_Call_initialize;
 	profiler->calls.element_free = (void (*)(void*))Fiber_Profiler_Capture_Call_free;
-	Fiber_Profiler_Array_initialize(&profiler->calls, sizeof(struct Fiber_Profiler_Capture_Call));
+	Fiber_Profiler_Deque_initialize(&profiler->calls, sizeof(struct Fiber_Profiler_Capture_Call));
 	
 	return TypedData_Wrap_Struct(klass, &Fiber_Profiler_Capture_Type, profiler);
 }
@@ -300,7 +298,7 @@ const char *event_flag_name(rb_event_flag_t event_flag) {
 }
 
 static struct Fiber_Profiler_Capture_Call* profiler_event_record_call(struct Fiber_Profiler_Capture *profiler, rb_event_flag_t event_flag, ID id, VALUE klass) {
-	struct Fiber_Profiler_Capture_Call *call = Fiber_Profiler_Array_push(&profiler->calls);
+	struct Fiber_Profiler_Capture_Call *call = Fiber_Profiler_Deque_push(&profiler->calls);
 	
 	call->event_flag = event_flag;
 
@@ -349,7 +347,7 @@ static void Fiber_Profiler_Capture_callback(rb_event_flag_t event_flag, VALUE da
 		
 		// We may encounter returns without a preceeding call. This isn't an error, but we should pretend like the call started at the beginning of the profiling session:
 		if (call == NULL) {
-			struct Fiber_Profiler_Capture_Call *last_call = Fiber_Profiler_Array_last(&profiler->calls);
+			struct Fiber_Profiler_Capture_Call *last_call = Fiber_Profiler_Deque_last(&profiler->calls);
 			call = profiler_event_record_call(profiler, event_flag, id, klass);
 			
 			if (last_call) {
@@ -370,7 +368,7 @@ static void Fiber_Profiler_Capture_callback(rb_event_flag_t event_flag, VALUE da
 		// If the call was < 1% of the stall threshold, we can ignore it:
 		double duration = Fiber_Profiler_Time_delta(&call->enter_time, &call->exit_time);
 		if (duration < profiler->filter_threshold) {
-			Fiber_Profiler_Array_pop(&profiler->calls);
+			Fiber_Profiler_Deque_pop(&profiler->calls);
 		}
 	}
 }
@@ -487,8 +485,7 @@ void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *profiler, F
 	
 	size_t skipped = 0;
 	
-	for (size_t i = 0; i < profiler->calls.limit; i += 1) {
-		struct Fiber_Profiler_Capture_Call *call = Fiber_Profiler_Array_lookup(&profiler->calls, i);
+	Fiber_Profiler_Deque_each(&profiler->calls, struct Fiber_Profiler_Capture_Call, call) {
 		struct timespec duration = {};
 		Fiber_Profiler_Time_elapsed(&call->enter_time, &call->exit_time, &duration);
 		
@@ -535,8 +532,7 @@ void Fiber_Profiler_Capture_print_json(struct Fiber_Profiler_Capture *profiler, 
 	fprintf(stream, ",\"calls\":[");
 	int first = 1;
 	
-	for (size_t i = 0; i < profiler->calls.limit; i += 1) {
-		struct Fiber_Profiler_Capture_Call *call = Fiber_Profiler_Array_lookup(&profiler->calls, i);
+	Fiber_Profiler_Deque_each(&profiler->calls, struct Fiber_Profiler_Capture_Call, call) {
 		struct timespec duration = {};
 		Fiber_Profiler_Time_elapsed(&call->enter_time, &call->exit_time, &duration);
 		
