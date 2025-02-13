@@ -18,8 +18,8 @@ end
 
 2.times do
 	Fiber.new do
-		nested(100) do
-			# Nothing
+		nested(5) do
+			GC.start
 		end
 		
 		nested(10) do

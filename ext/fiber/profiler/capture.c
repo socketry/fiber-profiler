@@ -277,11 +277,11 @@ VALUE Fiber_Profiler_Capture_default(VALUE klass) {
 }
 
 int event_flag_call_p(rb_event_flag_t event_flags) {
-	return event_flags & (RUBY_EVENT_CALL | RUBY_EVENT_C_CALL | RUBY_EVENT_B_CALL);
+	return event_flags & (RUBY_EVENT_CALL | RUBY_EVENT_C_CALL | RUBY_EVENT_B_CALL | RUBY_INTERNAL_EVENT_GC_START);
 }
 
 int event_flag_return_p(rb_event_flag_t event_flags) {
-	return event_flags & (RUBY_EVENT_RETURN | RUBY_EVENT_C_RETURN | RUBY_EVENT_B_RETURN);
+	return event_flags & (RUBY_EVENT_RETURN | RUBY_EVENT_C_RETURN | RUBY_EVENT_B_RETURN | RUBY_INTERNAL_EVENT_GC_END_SWEEP);
 }
 
 const char *event_flag_name(rb_event_flag_t event_flag) {
@@ -292,6 +292,9 @@ const char *event_flag_name(rb_event_flag_t event_flag) {
 		case RUBY_EVENT_RETURN: return "return";
 		case RUBY_EVENT_C_RETURN: return "c-return";
 		case RUBY_EVENT_B_RETURN: return "b-return";
+		case RUBY_INTERNAL_EVENT_GC_START: return "gc-start";
+		case RUBY_INTERNAL_EVENT_GC_END_MARK: return "gc-end-mark";
+		case RUBY_INTERNAL_EVENT_GC_END_SWEEP: return "gc-end-sweep";
 		default: return "unknown";
 	}
 }
@@ -392,6 +395,10 @@ VALUE Fiber_Profiler_Capture_start(VALUE self) {
 	
 	VALUE thread = rb_thread_current();
 	rb_thread_add_event_hook(thread, Fiber_Profiler_Capture_callback, event_flags, self);
+	
+	// if (profiler->track_garbage_collection) {
+		rb_thread_add_event_hook(thread, Fiber_Profiler_Capture_callback, RUBY_INTERNAL_EVENT_GC_START | RUBY_INTERNAL_EVENT_GC_END_SWEEP, self);
+	// }
 	
 	return self;
 }
