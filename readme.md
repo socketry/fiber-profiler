@@ -10,7 +10,17 @@ Migrating existing applications to the event loop can be tricky. One of the most
 
 ## Usage
 
+Please see the [project documentation](https://socketry.github.io/fiber-profiler/) for more details.
+
+  - [Getting Started](https://socketry.github.io/fiber-profiler/guides/getting-started/index) - This guide explains how to detect stalls using the fiber profiler.
+
 ## Releases
+
+Please see the [project releases](https://socketry.github.io/fiber-profiler/releases/index) for all releases.
+
+### v0.1.0
+
+  - Initial implementation extracted from `io-event` gem.
 
 ## Contributing
 
