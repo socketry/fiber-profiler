@@ -18,6 +18,10 @@ Please see the [project documentation](https://socketry.github.io/fiber-profiler
 
 Please see the [project releases](https://socketry.github.io/fiber-profiler/releases/index) for all releases.
 
+### v0.1.3
+
+  - Improved performance when not profiling (when sampling is enabled).
+
 ### v0.1.0
 
   - Initial implementation extracted from `io-event` gem.
