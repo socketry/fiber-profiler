@@ -13,23 +13,3 @@ void Fiber_Profiler_Time_elapsed(const struct timespec* start, const struct time
 		duration->tv_nsec = stop->tv_nsec - start->tv_nsec;
 	}
 }
-
-double Fiber_Profiler_Time_duration(const struct timespec *duration)
-{
-	return duration->tv_sec + duration->tv_nsec / 1000000000.0;
-}
-
-void Fiber_Profiler_Time_current(struct timespec *time) {
-	clock_gettime(CLOCK_MONOTONIC, time);
-}
-
-double Fiber_Profiler_Time_proportion(const struct timespec *duration, const struct timespec *total_duration) {
-	return Fiber_Profiler_Time_duration(duration) / Fiber_Profiler_Time_duration(total_duration);
-}
-
-double Fiber_Profiler_Time_delta(const struct timespec *start, const struct timespec *stop) {
-	struct timespec duration;
-	Fiber_Profiler_Time_elapsed(start, stop, &duration);
-	
-	return Fiber_Profiler_Time_duration(&duration);
-}
