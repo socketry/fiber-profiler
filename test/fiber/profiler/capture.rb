@@ -57,7 +57,7 @@ describe Fiber::Profiler::Capture do
 			profiler.start
 			
 			Fiber.new do
-				sleep 0.0001
+				sleep 0.001
 			end.resume
 			
 			profiler.stop
@@ -72,12 +72,12 @@ describe Fiber::Profiler::Capture do
 			)
 			
 			calls = stall["calls"]
-			expect(calls[0]).to have_keys(
+			expect(calls).to have_value(have_keys(
 				"path" => be == __FILE__,
 				"line" => be > 0,
 				"class" => be == "Kernel",
 				"method" => be == "sleep",
-			)
+			))
 		end
 		
 		def nested(n = 100, &block)
@@ -119,7 +119,7 @@ describe Fiber::Profiler::Capture do
 			
 			Fiber.new do
 				GC.start
-				sleep(0.0001)
+				sleep(0.001)
 			end.resume
 			
 			profiler.stop
@@ -130,9 +130,9 @@ describe Fiber::Profiler::Capture do
 			
 			stall = JSON.parse(output.string)
 			calls = stall["calls"]
-			expect(calls[0]).to have_keys(
+			expect(calls).to have_value(have_keys(
 				"path" => be =~ /internal:gc/,
-			)
+			))
 		end
 	end
 end

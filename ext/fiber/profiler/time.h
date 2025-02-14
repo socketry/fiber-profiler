@@ -28,5 +28,13 @@ static inline double Fiber_Profiler_Time_delta(const struct timespec *start, con
 	return stop->tv_sec - start->tv_sec + (stop->tv_nsec - start->tv_nsec) / 1e9;
 }
 
+static inline double Fiber_Profiler_Time_delta_current(const struct timespec *start)
+{
+	struct timespec stop;
+	Fiber_Profiler_Time_current(&stop);
+	
+	return Fiber_Profiler_Time_delta(start, &stop);
+}
+
 #define Fiber_Profiler_TIME_PRINTF_TIMESPEC "%.3g"
 #define Fiber_Profiler_TIME_PRINTF_TIMESPEC_ARGUMENTS(ts) ((double)(ts).tv_sec + (ts).tv_nsec / 1e9)

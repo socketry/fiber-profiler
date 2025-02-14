@@ -172,6 +172,53 @@ inline static size_t Fiber_Profiler_Deque_default_capacity(struct Fiber_Profiler
 	return (target_size - sizeof(struct Fiber_Profiler_Deque_Page)) / deque->element_size;
 }
 
+static inline void Fiber_Profiler_Deque_reserve(struct Fiber_Profiler_Deque *deque, size_t capacity)
+{
+	struct Fiber_Profiler_Deque_Page *page = deque->head;
+	
+	// Walk over all the pages and see if we have enough capacity:
+	while (page) {
+		size_t available = page->capacity - page->size;
+		
+		if (available > capacity) {
+			return;
+		}
+		
+		capacity -= available;
+		
+		if (page->tail) {
+			page = page->tail;
+		} else {
+			break;
+		}
+	}
+	
+	// We need to allocate a new page:
+	size_t minimum_capacity = Fiber_Profiler_Deque_default_capacity(deque);
+	if (capacity < minimum_capacity) {
+		capacity = minimum_capacity;
+	}
+	
+	struct Fiber_Profiler_Deque_Page *reserved_page = Fiber_Profiler_Deque_Page_allocate(deque->element_size, capacity);
+	if (reserved_page == NULL) {
+		return;
+	}
+	
+	if (page) {
+		page->tail = reserved_page;
+		reserved_page->head = page;
+	} else {
+		deque->head = deque->tail = reserved_page;
+	}
+	
+	if (Fiber_Profiler_Deque_DEBUG) Fiber_Profiler_Deque_debug(deque, __FUNCTION__);
+}
+
+static inline void Fiber_Profiler_Deque_reserve_default(struct Fiber_Profiler_Deque *deque)
+{
+	Fiber_Profiler_Deque_reserve(deque, Fiber_Profiler_Deque_default_capacity(deque));
+}
+
 void *Fiber_Profiler_Deque_push(struct Fiber_Profiler_Deque *deque)
 {
 	struct Fiber_Profiler_Deque_Page *page = deque->tail;
