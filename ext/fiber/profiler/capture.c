@@ -308,7 +308,7 @@ const char *event_flag_name(rb_event_flag_t event_flag) {
 	}
 }
 
-static struct Fiber_Profiler_Capture_Call* profiler_event_record_call(struct Fiber_Profiler_Capture *profiler, rb_event_flag_t event_flag, ID id, VALUE klass) {
+static struct Fiber_Profiler_Capture_Call* Fiber_Profiler_Capture_Call_new(struct Fiber_Profiler_Capture *profiler, rb_event_flag_t event_flag, ID id, VALUE klass) {
 	struct Fiber_Profiler_Capture_Call *call = Fiber_Profiler_Deque_push(&profiler->calls);
 	
 	call->event_flag = event_flag;
@@ -339,6 +339,20 @@ static struct Fiber_Profiler_Capture_Call* profiler_event_record_call(struct Fib
 	return call;
 }
 
+void Fiber_Profiler_Capture_Call_filter(struct Fiber_Profiler_Capture *profiler, struct Fiber_Profiler_Capture_Call *call) {
+	double duration = Fiber_Profiler_Time_delta(&call->enter_time, &call->exit_time);
+	if (duration < profiler->filter_threshold) {
+		if (call->parent) {
+			call->parent->children -= 1;
+		}
+		
+		// Remove it entirely:
+		if (call == Fiber_Profiler_Deque_last(&profiler->calls)) {
+			Fiber_Profiler_Deque_pop(&profiler->calls);
+		}
+	}
+}
+
 static void Fiber_Profiler_Capture_callback(rb_event_flag_t event_flag, VALUE data, VALUE self, ID id, VALUE klass) {
 	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(data);
 	
@@ -346,7 +360,7 @@ static void Fiber_Profiler_Capture_callback(rb_event_flag_t event_flag, VALUE da
 	if (!profiler->capture) return;
 	
 	if (event_flag_call_p(event_flag)) {
-		struct Fiber_Profiler_Capture_Call *call = profiler_event_record_call(profiler, event_flag, id, klass);
+		struct Fiber_Profiler_Capture_Call *call = Fiber_Profiler_Capture_Call_new(profiler, event_flag, id, klass);
 		Fiber_Profiler_Time_current(&call->enter_time);
 	}
 	
@@ -356,7 +370,7 @@ static void Fiber_Profiler_Capture_callback(rb_event_flag_t event_flag, VALUE da
 		// We may encounter returns without a preceeding call. This isn't an error, but we should pretend like the call started at the beginning of the profiling session:
 		if (call == NULL) {
 			struct Fiber_Profiler_Capture_Call *last_call = Fiber_Profiler_Deque_last(&profiler->calls);
-			call = profiler_event_record_call(profiler, event_flag, id, klass);
+			call = Fiber_Profiler_Capture_Call_new(profiler, event_flag, id, klass);
 			
 			if (last_call) {
 				call->enter_time = last_call->enter_time;
@@ -373,15 +387,7 @@ static void Fiber_Profiler_Capture_callback(rb_event_flag_t event_flag, VALUE da
 		if (profiler->nesting > 0)
 			profiler->nesting -= 1;
 		
-		// If the call was < 1% of the stall threshold, we can ignore it:
-		double duration = Fiber_Profiler_Time_delta(&call->enter_time, &call->exit_time);
-		if (duration < profiler->filter_threshold) {
-			if (call->parent) {
-				call->parent->children -= 1;
-			}
-			
-			Fiber_Profiler_Deque_pop(&profiler->calls);
-		}
+		Fiber_Profiler_Capture_Call_filter(profiler, call);
 	}
 }
 
@@ -465,9 +471,12 @@ void Fiber_Profiler_Capture_finish(struct Fiber_Profiler_Capture *profiler) {
 	
 	struct Fiber_Profiler_Capture_Call *current = profiler->current;
 	while (current) {
-		Fiber_Profiler_Time_current(&current->exit_time);
+		struct Fiber_Profiler_Capture_Call *parent = current->parent;
 		
-		current = current->parent;
+		Fiber_Profiler_Time_current(&current->exit_time);
+		Fiber_Profiler_Capture_Call_filter(profiler, current);
+		
+		current = parent;
 	}
 }
 
