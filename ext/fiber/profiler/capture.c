@@ -73,12 +73,14 @@ struct Fiber_Profiler_Capture {
 	// Calls that are shorter than this filter threshold will be ignored:
 	double filter_threshold;
 	
+	// Output handling:
 	VALUE output;
 	Fiber_Profiler_Stream_Print print;
 	struct Fiber_Profiler_Stream stream;
 	
 	// Whether or not the profiler is currently running:
 	int running;
+	VALUE thread;
 	
 	// Whether or not to capture call data:
 	int capture;
@@ -133,6 +135,7 @@ void Fiber_Profiler_Capture_Call_free(void *element) {
 static void Fiber_Profiler_Capture_mark(void *ptr) {
 	struct Fiber_Profiler_Capture *profiler = (struct Fiber_Profiler_Capture*)ptr;
 	
+	rb_gc_mark_movable(profiler->thread);
 	rb_gc_mark_movable(profiler->output);
 	
 	// If `klass` is stored as a VALUE in calls, we need to mark them here:
@@ -144,6 +147,7 @@ static void Fiber_Profiler_Capture_mark(void *ptr) {
 static void Fiber_Profiler_Capture_compact(void *ptr) {
 	struct Fiber_Profiler_Capture *profiler = (struct Fiber_Profiler_Capture*)ptr;
 	
+	profiler->thread = rb_gc_location(profiler->thread);
 	profiler->output = rb_gc_location(profiler->output);
 	
 	// If `klass` is stored as a VALUE in calls, we need to update their locations here:
@@ -213,7 +217,10 @@ VALUE Fiber_Profiler_Capture_allocate(VALUE klass) {
 	// Initialize the profiler state:
 	Fiber_Profiler_Stream_initialize(&profiler->stream);
 	profiler->output = Qnil;
+	
 	profiler->running = 0;
+	profiler->thread = Qnil;
+	
 	profiler->capture = 0;
 	profiler->stalls = 0;
 	profiler->nesting = 0;
@@ -326,15 +333,8 @@ static struct Fiber_Profiler_Capture_Call* profiler_event_record_call(struct Fib
 	return call;
 }
 
-void Fiber_Profiler_Capture_fiber_switch(struct Fiber_Profiler_Capture *profiler);
-
 static void Fiber_Profiler_Capture_callback(rb_event_flag_t event_flag, VALUE data, VALUE self, ID id, VALUE klass) {
 	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(data);
-	
-	if (event_flag & RUBY_EVENT_FIBER_SWITCH) {
-		Fiber_Profiler_Capture_fiber_switch(profiler);
-		return;
-	}
 	
 	// We don't want to capture data if we're not running:
 	if (!profiler->capture) return;
@@ -375,17 +375,24 @@ static void Fiber_Profiler_Capture_callback(rb_event_flag_t event_flag, VALUE da
 	}
 }
 
-VALUE Fiber_Profiler_Capture_start(VALUE self) {
+void Fiber_Profiler_Capture_pause(VALUE self) {
 	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
 	
-	if (profiler->running) return Qfalse;
+	if (!profiler->capture) return;
 	
-	profiler->running = 1;
+	profiler->capture = 0;
 	
-	Fiber_Profiler_Capture_reset(profiler);
-	Fiber_Profiler_Time_current(&profiler->start_time);
+	rb_thread_remove_event_hook_with_data(profiler->thread, Fiber_Profiler_Capture_callback, self);
+}
+
+void Fiber_Profiler_Capture_resume(VALUE self) {
+	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
 	
-	rb_event_flag_t event_flags = RUBY_EVENT_FIBER_SWITCH;
+	if (profiler->capture) return;
+	
+	profiler->capture = 1;
+	
+	rb_event_flag_t event_flags = 0;
 	
 	if (profiler->track_calls) {
 		event_flags |= RUBY_EVENT_CALL | RUBY_EVENT_RETURN;
@@ -393,12 +400,29 @@ VALUE Fiber_Profiler_Capture_start(VALUE self) {
 		// event_flags |= RUBY_EVENT_B_CALL | RUBY_EVENT_B_RETURN;
 	}
 	
-	VALUE thread = rb_thread_current();
-	rb_thread_add_event_hook(thread, Fiber_Profiler_Capture_callback, event_flags, self);
+	// CRuby will raise an exception if you try to add "INTERNAL_EVENT" hooks at the same time as other hooks, so we do it in two calls:
+	rb_thread_add_event_hook(profiler->thread, Fiber_Profiler_Capture_callback, event_flags, self);
+	rb_thread_add_event_hook(profiler->thread, Fiber_Profiler_Capture_callback, RUBY_INTERNAL_EVENT_GC_START | RUBY_INTERNAL_EVENT_GC_END_SWEEP, self);
+}
+
+void Fiber_Profiler_Capture_fiber_switch(VALUE self);
+
+void Fiber_Profiler_Capture_fiber_switch_callback(rb_event_flag_t event_flag, VALUE data, VALUE self, ID id, VALUE klass) {
+	Fiber_Profiler_Capture_fiber_switch(data);
+}
+
+VALUE Fiber_Profiler_Capture_start(VALUE self) {
+	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
 	
-	// if (profiler->track_garbage_collection) {
-		rb_thread_add_event_hook(thread, Fiber_Profiler_Capture_callback, RUBY_INTERNAL_EVENT_GC_START | RUBY_INTERNAL_EVENT_GC_END_SWEEP, self);
-	// }
+	if (profiler->running) return Qfalse;
+	
+	profiler->running = 1;
+	profiler->thread = rb_thread_current();
+	
+	Fiber_Profiler_Capture_reset(profiler);
+	Fiber_Profiler_Time_current(&profiler->start_time);
+	
+	rb_thread_add_event_hook(profiler->thread, Fiber_Profiler_Capture_fiber_switch_callback, RUBY_EVENT_FIBER_SWITCH, self);
 	
 	return self;
 }
@@ -408,11 +432,13 @@ VALUE Fiber_Profiler_Capture_stop(VALUE self) {
 	
 	if (!profiler->running) return Qfalse;
 	
+	Fiber_Profiler_Capture_pause(self);
+	
+	rb_thread_remove_event_hook_with_data(profiler->thread, Fiber_Profiler_Capture_fiber_switch_callback, self);
+	
 	profiler->running = 0;
-	
-	VALUE thread = rb_thread_current();
-	rb_thread_remove_event_hook_with_data(thread, Fiber_Profiler_Capture_callback, self);
-	
+	profiler->thread = Qnil;
+		
 	Fiber_Profiler_Time_current(&profiler->stop_time);
 	Fiber_Profiler_Capture_reset(profiler);
 	
@@ -454,26 +480,29 @@ int Fiber_Profiler_Capture_sample(struct Fiber_Profiler_Capture *profiler) {
 	}
 }
 
-void Fiber_Profiler_Capture_fiber_switch(struct Fiber_Profiler_Capture *profiler)
+void Fiber_Profiler_Capture_fiber_switch(VALUE self)
 {
+	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
 	float duration = Fiber_Profiler_Capture_duration(profiler);
 	
 	if (profiler->capture) {
+		Fiber_Profiler_Capture_pause(self);
+		
 		Fiber_Profiler_Capture_finish(profiler);
 		
 		if (duration > profiler->stall_threshold) {
 			profiler->stalls += 1;
 			Fiber_Profiler_Capture_print(profiler);
 		}
+		
+		Fiber_Profiler_Capture_reset(profiler);
 	}
-	
-	Fiber_Profiler_Capture_reset(profiler);
 	
 	if (Fiber_Profiler_Capture_sample(profiler)) {
 		// Reset the start time:
 		Fiber_Profiler_Time_current(&profiler->start_time);
 		
-		profiler->capture = 1;
+		Fiber_Profiler_Capture_resume(self);
 	}
 }
 
