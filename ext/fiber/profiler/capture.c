@@ -28,6 +28,7 @@ struct Fiber_Profiler_Capture_Call {
 	struct timespec exit_time;
 	
 	size_t nesting;
+	size_t children;
 	
 	rb_event_flag_t event_flag;
 	ID id;
@@ -115,6 +116,7 @@ void Fiber_Profiler_Capture_Call_initialize(void *element) {
 	call->exit_time.tv_nsec = 0;
 	
 	call->nesting = 0;
+	call->children = 0;
 	
 	call->event_flag = 0;
 	call->id = 0;
@@ -230,8 +232,8 @@ VALUE Fiber_Profiler_Capture_allocate(VALUE klass) {
 	profiler->track_calls = Fiber_Profiler_Capture_track_calls;
 	profiler->sample_rate = Fiber_Profiler_Capture_sample_rate;
 	
-	// Filter calls that are less than 1% of the stall threshold:
-	profiler->filter_threshold = profiler->stall_threshold * 0.01;
+	// Filter calls that are less than 10% of the stall threshold:
+	profiler->filter_threshold = profiler->stall_threshold * 0.1;
 	
 	profiler->calls.element_initialize = (void (*)(void*))Fiber_Profiler_Capture_Call_initialize;
 	profiler->calls.element_free = (void (*)(void*))Fiber_Profiler_Capture_Call_free;
@@ -312,8 +314,12 @@ static struct Fiber_Profiler_Capture_Call* profiler_event_record_call(struct Fib
 	call->event_flag = event_flag;
 
 	call->parent = profiler->current;
+	if (call->parent) {
+		call->parent->children += 1;
+	}
+	
 	profiler->current = call;
-
+	
 	call->nesting = profiler->nesting;
 	profiler->nesting += 1;
 
@@ -370,6 +376,10 @@ static void Fiber_Profiler_Capture_callback(rb_event_flag_t event_flag, VALUE da
 		// If the call was < 1% of the stall threshold, we can ignore it:
 		double duration = Fiber_Profiler_Time_delta(&call->enter_time, &call->exit_time);
 		if (duration < profiler->filter_threshold) {
+			if (call->parent) {
+				call->parent->children -= 1;
+			}
+			
 			Fiber_Profiler_Deque_pop(&profiler->calls);
 		}
 	}
@@ -445,13 +455,9 @@ VALUE Fiber_Profiler_Capture_stop(VALUE self) {
 	return self;
 }
 
-static inline float Fiber_Profiler_Capture_duration(struct Fiber_Profiler_Capture *profiler) {
-	struct timespec duration;
-	
+static inline double Fiber_Profiler_Capture_duration(struct Fiber_Profiler_Capture *profiler) {
 	Fiber_Profiler_Time_current(&profiler->stop_time);
-	Fiber_Profiler_Time_elapsed(&profiler->start_time, &profiler->stop_time, &duration);
-	
-	return Fiber_Profiler_Time_duration(&duration);
+	return Fiber_Profiler_Time_delta(&profiler->start_time, &profiler->stop_time);
 }
 
 void Fiber_Profiler_Capture_finish(struct Fiber_Profiler_Capture *profiler) {
@@ -517,18 +523,34 @@ void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *profiler, F
 	size_t skipped = 0;
 	
 	Fiber_Profiler_Deque_each(&profiler->calls, struct Fiber_Profiler_Capture_Call, call) {
-		struct timespec duration = {};
-		Fiber_Profiler_Time_elapsed(&call->enter_time, &call->exit_time, &duration);
-		
-		// Skip calls that are too short to be meaningful:
-		if (Fiber_Profiler_Time_proportion(&duration, &total_duration) < Fiber_Profiler_Capture_PRINT_MINIMUM_PROPORTION) {
-			
-			if (!DEBUG_SKIPPED) {
-				skipped += 1;
-				continue;
-			} else {
-				fprintf(stream, "\e[2m");
+		if (call->children) {
+			if (call->parent && call->parent->children == 1) {
+				if (!DEBUG_SKIPPED) {
+					// We remove the nesting level as we're skipping this call - and we use this to track the nesting of child calls which MAY be printed:
+					call->nesting = call->parent->nesting;
+					skipped += 1;
+					continue;
+				} else {
+					fprintf(stream, "\e[34m");
+				}
 			}
+		}
+		
+		if (call->parent) {
+			call->nesting = call->parent->nesting + 1;
+		}
+		
+		if (skipped) {
+			fprintf(stream, "\e[2m");
+			
+			for (size_t i = 0; i < call->nesting; i += 1) {
+				fputc('\t', stream);
+			}
+			
+			fprintf(stream, "... skipped %zu nested calls ...\e[0m\n", skipped);
+			
+			skipped = 0;
+			call->nesting += 1;
 		}
 		
 		for (size_t i = 0; i < call->nesting; i += 1) {
@@ -537,16 +559,14 @@ void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *profiler, F
 		
 		VALUE class_inspect = rb_inspect(call->klass);
 		const char *name = rb_id2name(call->id);
+		struct timespec duration = {};
+		Fiber_Profiler_Time_elapsed(&call->enter_time, &call->exit_time, &duration);
 		
 		fprintf(stream, "%s:%d in %s '%s#%s' (" Fiber_Profiler_TIME_PRINTF_TIMESPEC "s)\n", call->path, call->line, event_flag_name(call->event_flag), RSTRING_PTR(class_inspect), name, Fiber_Profiler_TIME_PRINTF_TIMESPEC_ARGUMENTS(duration));
 		
 		if (DEBUG_SKIPPED) {
 			fprintf(stream, "\e[0m");
 		}
-	}
-	
-	if (skipped > 0) {
-		fprintf(stream, "Skipped %zu calls that were too short to be meaningful.\n", skipped);
 	}
 }
 

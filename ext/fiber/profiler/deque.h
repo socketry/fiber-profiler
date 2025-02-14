@@ -11,7 +11,7 @@ enum {
 #ifdef RUBY_DEBUG
 	Fiber_Profiler_Deque_DEBUG = 1,
 #else
-	Fiber_Profiler_Deque_DEBUG = 0,
+	Fiber_Profiler_Deque_DEBUG = 1,
 #endif
 };
 
