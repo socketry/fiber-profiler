@@ -75,7 +75,7 @@ struct Fiber_Profiler_Capture {
 	// Whether or not to track calls.
 	int track_calls;
 	
-	// The sample rate of the profiler, as a fraction of 1.0, which controls how often the profiler will sample between fiber context switches.
+	// The sample rate of the capture, as a fraction of 1.0, which controls how often the profiler will sample between fiber context switches.
 	double sample_rate;
 	
 	// Calls that are shorter than this filter threshold will be ignored.
@@ -127,11 +127,11 @@ struct Fiber_Profiler_Capture {
 	struct Fiber_Profiler_Deque calls;
 };
 
-void Fiber_Profiler_Capture_reset(struct Fiber_Profiler_Capture *profiler) {
-	profiler->nesting = 0;
-	profiler->nesting_minimum = 0;
-	profiler->current = NULL;
-	Fiber_Profiler_Deque_truncate(&profiler->calls);
+void Fiber_Profiler_Capture_reset(struct Fiber_Profiler_Capture *capture) {
+	capture->nesting = 0;
+	capture->nesting_minimum = 0;
+	capture->current = NULL;
+	Fiber_Profiler_Deque_truncate(&capture->calls);
 }
 
 void Fiber_Profiler_Capture_Call_initialize(void *element) {
@@ -162,43 +162,43 @@ void Fiber_Profiler_Capture_Call_free(void *element) {
 }
 
 static void Fiber_Profiler_Capture_mark(void *ptr) {
-	struct Fiber_Profiler_Capture *profiler = (struct Fiber_Profiler_Capture*)ptr;
+	struct Fiber_Profiler_Capture *capture = (struct Fiber_Profiler_Capture*)ptr;
 	
-	rb_gc_mark_movable(profiler->thread);
-	rb_gc_mark_movable(profiler->output);
+	rb_gc_mark_movable(capture->thread);
+	rb_gc_mark_movable(capture->output);
 	
 	// If `klass` is stored as a VALUE in calls, we need to mark them here:
-	Fiber_Profiler_Deque_each(&profiler->calls, struct Fiber_Profiler_Capture_Call, call) {
+	Fiber_Profiler_Deque_each(&capture->calls, struct Fiber_Profiler_Capture_Call, call) {
 		rb_gc_mark_movable(call->klass);
 	}
 }
 
 static void Fiber_Profiler_Capture_compact(void *ptr) {
-	struct Fiber_Profiler_Capture *profiler = (struct Fiber_Profiler_Capture*)ptr;
+	struct Fiber_Profiler_Capture *capture = (struct Fiber_Profiler_Capture*)ptr;
 	
-	profiler->thread = rb_gc_location(profiler->thread);
-	profiler->output = rb_gc_location(profiler->output);
+	capture->thread = rb_gc_location(capture->thread);
+	capture->output = rb_gc_location(capture->output);
 	
 	// If `klass` is stored as a VALUE in calls, we need to update their locations here:
-	Fiber_Profiler_Deque_each(&profiler->calls, struct Fiber_Profiler_Capture_Call, call) {
+	Fiber_Profiler_Deque_each(&capture->calls, struct Fiber_Profiler_Capture_Call, call) {
 		call->klass = rb_gc_location(call->klass);
 	}
 }
 
 static void Fiber_Profiler_Capture_free(void *ptr) {
-	struct Fiber_Profiler_Capture *profiler = (struct Fiber_Profiler_Capture*)ptr;
+	struct Fiber_Profiler_Capture *capture = (struct Fiber_Profiler_Capture*)ptr;
 	
-	RUBY_ASSERT(profiler->running == 0);
+	RUBY_ASSERT(capture->running == 0);
 	
-	Fiber_Profiler_Stream_free(&profiler->stream);
-	Fiber_Profiler_Deque_free(&profiler->calls);
+	Fiber_Profiler_Stream_free(&capture->stream);
+	Fiber_Profiler_Deque_free(&capture->calls);
 	
-	free(profiler);
+	free(capture);
 }
 
 static size_t Fiber_Profiler_Capture_memsize(const void *ptr) {
-	const struct Fiber_Profiler_Capture *profiler = (const struct Fiber_Profiler_Capture*)ptr;
-	return sizeof(*profiler) + Fiber_Profiler_Deque_memory_size(&profiler->calls);
+	const struct Fiber_Profiler_Capture *capture = (const struct Fiber_Profiler_Capture*)ptr;
+	return sizeof(*capture) + Fiber_Profiler_Deque_memory_size(&capture->calls);
 }
 
 const rb_data_type_t Fiber_Profiler_Capture_Type = {
@@ -213,9 +213,9 @@ const rb_data_type_t Fiber_Profiler_Capture_Type = {
 };
 
 struct Fiber_Profiler_Capture *Fiber_Profiler_Capture_get(VALUE self) {
-	struct Fiber_Profiler_Capture *profiler;
-	TypedData_Get_Struct(self, struct Fiber_Profiler_Capture, &Fiber_Profiler_Capture_Type, profiler);
-	return profiler;
+	struct Fiber_Profiler_Capture *capture;
+	TypedData_Get_Struct(self, struct Fiber_Profiler_Capture, &Fiber_Profiler_Capture_Type, capture);
+	return capture;
 }
 
 int IO_istty(VALUE io) {
@@ -227,56 +227,56 @@ int IO_istty(VALUE io) {
 	return 0;
 }
 
-void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *profiler, FILE *restrict stream);
-void Fiber_Profiler_Capture_print_json(struct Fiber_Profiler_Capture *profiler, FILE *restrict stream);
+void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *capture, FILE *restrict stream);
+void Fiber_Profiler_Capture_print_json(struct Fiber_Profiler_Capture *capture, FILE *restrict stream);
 
-static void Fiber_Profiler_Capture_output_set(struct Fiber_Profiler_Capture *profiler, VALUE output) {
-	profiler->output = output;
+static void Fiber_Profiler_Capture_output_set(struct Fiber_Profiler_Capture *capture, VALUE output) {
+	capture->output = output;
 	
-	if (IO_istty(profiler->output)) {
-		profiler->print = &Fiber_Profiler_Capture_print_tty;
+	if (IO_istty(capture->output)) {
+		capture->print = &Fiber_Profiler_Capture_print_tty;
 	} else {
-		profiler->print = &Fiber_Profiler_Capture_print_json;
+		capture->print = &Fiber_Profiler_Capture_print_json;
 	}
 }
 
 VALUE Fiber_Profiler_Capture_allocate(VALUE klass) {
-	struct Fiber_Profiler_Capture *profiler = ALLOC(struct Fiber_Profiler_Capture);
+	struct Fiber_Profiler_Capture *capture = ALLOC(struct Fiber_Profiler_Capture);
 	
 	// Initialize the profiler state:
-	Fiber_Profiler_Stream_initialize(&profiler->stream);
-	profiler->output = Qnil;
+	Fiber_Profiler_Stream_initialize(&capture->stream);
+	capture->output = Qnil;
 	
-	profiler->switches = 0;
-	profiler->samples = 0;
-	profiler->stalls = 0;
+	capture->switches = 0;
+	capture->samples = 0;
+	capture->stalls = 0;
 	
-	profiler->running = 0;
-	profiler->thread = Qnil;
+	capture->running = 0;
+	capture->thread = Qnil;
 	
-	profiler->capture = 0;
-	profiler->nesting = 0;
-	profiler->nesting_minimum = 0;
-	profiler->current = NULL;
+	capture->capture = 0;
+	capture->nesting = 0;
+	capture->nesting_minimum = 0;
+	capture->current = NULL;
 	
-	profiler->stall_threshold = Fiber_Profiler_Capture_stall_threshold;
-	profiler->filter_threshold = Fiber_Profiler_Capture_filter_threshold;
-	profiler->track_calls = Fiber_Profiler_Capture_track_calls;
-	profiler->sample_rate = Fiber_Profiler_Capture_sample_rate;
+	capture->stall_threshold = Fiber_Profiler_Capture_stall_threshold;
+	capture->filter_threshold = Fiber_Profiler_Capture_filter_threshold;
+	capture->track_calls = Fiber_Profiler_Capture_track_calls;
+	capture->sample_rate = Fiber_Profiler_Capture_sample_rate;
 	
-	profiler->calls.element_initialize = (void (*)(void*))Fiber_Profiler_Capture_Call_initialize;
-	profiler->calls.element_free = (void (*)(void*))Fiber_Profiler_Capture_Call_free;
+	capture->calls.element_initialize = (void (*)(void*))Fiber_Profiler_Capture_Call_initialize;
+	capture->calls.element_free = (void (*)(void*))Fiber_Profiler_Capture_Call_free;
 	
-	Fiber_Profiler_Deque_initialize(&profiler->calls, sizeof(struct Fiber_Profiler_Capture_Call));
-	Fiber_Profiler_Deque_reserve_default(&profiler->calls);
+	Fiber_Profiler_Deque_initialize(&capture->calls, sizeof(struct Fiber_Profiler_Capture_Call));
+	Fiber_Profiler_Deque_reserve_default(&capture->calls);
 	
-	return TypedData_Wrap_Struct(klass, &Fiber_Profiler_Capture_Type, profiler);
+	return TypedData_Wrap_Struct(klass, &Fiber_Profiler_Capture_Type, capture);
 }
 
 ID Fiber_Profiler_Capture_initialize_options[5];
 
 VALUE Fiber_Profiler_Capture_initialize(int argc, VALUE *argv, VALUE self) {
-	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
+	struct Fiber_Profiler_Capture *capture = Fiber_Profiler_Capture_get(self);
 	
 	VALUE arguments[5] = {0};
 	VALUE options = Qnil;
@@ -284,26 +284,26 @@ VALUE Fiber_Profiler_Capture_initialize(int argc, VALUE *argv, VALUE self) {
 	rb_get_kwargs(options, Fiber_Profiler_Capture_initialize_options, 0, 5, arguments);
 	
 	if (arguments[0] != Qundef) {
-		profiler->stall_threshold = NUM2DBL(arguments[0]);
+		capture->stall_threshold = NUM2DBL(arguments[0]);
 	}
 	
 	if (arguments[1] != Qundef) {
-		profiler->filter_threshold = NUM2DBL(arguments[1]);
+		capture->filter_threshold = NUM2DBL(arguments[1]);
 	}
 	
 	if (arguments[2] != Qundef) {
-		profiler->track_calls = RB_TEST(arguments[2]);
+		capture->track_calls = RB_TEST(arguments[2]);
 	}
 	
 	if (arguments[3] != Qundef) {
-		profiler->sample_rate = NUM2DBL(arguments[3]);
+		capture->sample_rate = NUM2DBL(arguments[3]);
 	}
 	
 	if (arguments[4] != Qundef) {
-		Fiber_Profiler_Capture_output_set(profiler, arguments[4]);
+		Fiber_Profiler_Capture_output_set(capture, arguments[4]);
 	} else {
 		// Initialize the profiler output - we dup `rb_stderr` because the profiler may otherwise run into synchronization issues with other uses of `rb_stderr`:
-		Fiber_Profiler_Capture_output_set(profiler, rb_obj_dup(rb_stderr));
+		Fiber_Profiler_Capture_output_set(capture, rb_obj_dup(rb_stderr));
 	}
 	
 	return self;
@@ -314,10 +314,10 @@ VALUE Fiber_Profiler_Capture_default(VALUE klass) {
 		return Qnil;
 	}
 	
-	VALUE profiler = Fiber_Profiler_Capture_allocate(klass);
-	Fiber_Profiler_Capture_initialize(0, NULL, profiler);
+	VALUE capture = Fiber_Profiler_Capture_allocate(klass);
+	Fiber_Profiler_Capture_initialize(0, NULL, capture);
 	
-	return profiler;
+	return capture;
 }
 
 int event_flag_call_p(rb_event_flag_t event_flags) {
@@ -344,19 +344,19 @@ const char *event_flag_name(rb_event_flag_t event_flag) {
 	}
 }
 
-static struct Fiber_Profiler_Capture_Call* Fiber_Profiler_Capture_Call_new(struct Fiber_Profiler_Capture *profiler, rb_event_flag_t event_flag, ID id, VALUE klass) {
-	struct Fiber_Profiler_Capture_Call *call = Fiber_Profiler_Deque_push(&profiler->calls);
+static struct Fiber_Profiler_Capture_Call* Fiber_Profiler_Capture_Call_new(struct Fiber_Profiler_Capture *capture, rb_event_flag_t event_flag, ID id, VALUE klass) {
+	struct Fiber_Profiler_Capture_Call *call = Fiber_Profiler_Deque_push(&capture->calls);
 	
 	call->event_flag = event_flag;
 
-	call->parent = profiler->current;
+	call->parent = capture->current;
 	if (call->parent) {
 		call->parent->children += 1;
 	}
 	
-	profiler->current = call;
+	capture->current = call;
 	
-	call->nesting = profiler->nesting;
+	call->nesting = capture->nesting;
 
 	if (id) {
 		call->id = id;
@@ -375,15 +375,15 @@ static struct Fiber_Profiler_Capture_Call* Fiber_Profiler_Capture_Call_new(struc
 }
 
 // Finish the call by calculating the duration and filtering it if necessary.
-int Fiber_Profiler_Capture_Call_finish(struct Fiber_Profiler_Capture *profiler, struct Fiber_Profiler_Capture_Call *call) {
+int Fiber_Profiler_Capture_Call_finish(struct Fiber_Profiler_Capture *capture, struct Fiber_Profiler_Capture_Call *call) {
 	// Don't filter calls if we're not running:
 	if (DEBUG_FILTERED) return 0;
 	
-	if (call->duration < profiler->filter_threshold) {
+	if (call->duration < capture->filter_threshold) {
 		// We can only remove calls from the end of the deque, otherwise they might be referenced by other calls:
-		if (call == Fiber_Profiler_Deque_last(&profiler->calls)) {
-			if (profiler->current == call) {
-				profiler->current = call->parent;
+		if (call == Fiber_Profiler_Deque_last(&capture->calls)) {
+			if (capture->current == call) {
+				capture->current = call->parent;
 			}
 			
 			if (call->parent) {
@@ -392,7 +392,7 @@ int Fiber_Profiler_Capture_Call_finish(struct Fiber_Profiler_Capture *profiler, 
 				call->parent = NULL;
 			}
 			
-			Fiber_Profiler_Deque_pop(&profiler->calls);
+			Fiber_Profiler_Deque_pop(&capture->calls);
 			
 			return 1;
 		}
@@ -404,7 +404,7 @@ int Fiber_Profiler_Capture_Call_finish(struct Fiber_Profiler_Capture *profiler, 
 // Whether to highlight a call as expensive. This is purely cosmetic.
 static const double Fiber_Profiler_Capture_Call_EXPENSIVE_THRESHOLD = 0.2;
 
-int Fiber_Profiler_Capture_Call_expensive_p(struct Fiber_Profiler_Capture *profiler, struct Fiber_Profiler_Capture_Call *call, double total_duration) {
+int Fiber_Profiler_Capture_Call_expensive_p(struct Fiber_Profiler_Capture *capture, struct Fiber_Profiler_Capture_Call *call, double total_duration) {
 	if (call->duration > total_duration * Fiber_Profiler_Capture_Call_EXPENSIVE_THRESHOLD) {
 		return 1;
 	}
@@ -413,57 +413,57 @@ int Fiber_Profiler_Capture_Call_expensive_p(struct Fiber_Profiler_Capture *profi
 }
 
 static void Fiber_Profiler_Capture_callback(rb_event_flag_t event_flag, VALUE data, VALUE self, ID id, VALUE klass) {
-	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(data);
+	struct Fiber_Profiler_Capture *capture = Fiber_Profiler_Capture_get(data);
 	
 	// We don't want to capture data if we're not running:
-	if (!profiler->capture) return;
+	if (!capture->capture) return;
 	
 	if (event_flag_call_p(event_flag)) {
-		struct Fiber_Profiler_Capture_Call *call = Fiber_Profiler_Capture_Call_new(profiler, event_flag, id, klass);
+		struct Fiber_Profiler_Capture_Call *call = Fiber_Profiler_Capture_Call_new(capture, event_flag, id, klass);
 		
-		profiler->nesting += 1;
+		capture->nesting += 1;
 		
 		Fiber_Profiler_Time_current(&call->enter_time);
 	}
 	
 	else if (event_flag_return_p(event_flag)) {
-		struct Fiber_Profiler_Capture_Call *call = profiler->current;
+		struct Fiber_Profiler_Capture_Call *call = capture->current;
 		
 		// We may encounter returns without a preceeding call. This isn't an error, but we should pretend like the call started at the beginning of the profiling session:
 		if (call == NULL) {
-			struct Fiber_Profiler_Capture_Call *last_call = Fiber_Profiler_Deque_last(&profiler->calls);
-			call = Fiber_Profiler_Capture_Call_new(profiler, event_flag, id, klass);
+			struct Fiber_Profiler_Capture_Call *last_call = Fiber_Profiler_Deque_last(&capture->calls);
+			call = Fiber_Profiler_Capture_Call_new(capture, event_flag, id, klass);
 			
 			if (last_call) {
 				call->enter_time = last_call->enter_time;
 			} else {
-				call->enter_time = profiler->start_time;
+				call->enter_time = capture->start_time;
 			}
 		}
 		
 		call->duration = Fiber_Profiler_Time_delta_current(&call->enter_time);
 		
-		profiler->current = call->parent;
+		capture->current = call->parent;
 		
 		// We may encounter returns without a preceeding call.
-		profiler->nesting -= 1;
+		capture->nesting -= 1;
 		
 		// We need to keep track of how deep the call stack goes:
-		if (profiler->nesting < profiler->nesting_minimum) {
-			profiler->nesting_minimum = profiler->nesting;
+		if (capture->nesting < capture->nesting_minimum) {
+			capture->nesting_minimum = capture->nesting;
 		}
 		
-		Fiber_Profiler_Capture_Call_finish(profiler, call);
+		Fiber_Profiler_Capture_Call_finish(capture, call);
 	}
 	
 	else {
-		struct Fiber_Profiler_Capture_Call *last_call = Fiber_Profiler_Deque_last(&profiler->calls);
-		struct Fiber_Profiler_Capture_Call *call = Fiber_Profiler_Capture_Call_new(profiler, event_flag, id, klass);
+		struct Fiber_Profiler_Capture_Call *last_call = Fiber_Profiler_Deque_last(&capture->calls);
+		struct Fiber_Profiler_Capture_Call *call = Fiber_Profiler_Capture_Call_new(capture, event_flag, id, klass);
 		
 		if (last_call) {
 			call->enter_time = last_call->enter_time;
 		} else {
-			call->enter_time = profiler->start_time;
+			call->enter_time = capture->start_time;
 		}
 		
 		call->duration = Fiber_Profiler_Time_delta_current(&call->enter_time);
@@ -471,24 +471,24 @@ static void Fiber_Profiler_Capture_callback(rb_event_flag_t event_flag, VALUE da
 }
 
 void Fiber_Profiler_Capture_pause(VALUE self) {
-	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
+	struct Fiber_Profiler_Capture *capture = Fiber_Profiler_Capture_get(self);
 	
-	if (!profiler->capture) return;
-	profiler->capture = 0;
+	if (!capture->capture) return;
+	capture->capture = 0;
 	
-	if (profiler->track_calls) {
-		rb_thread_remove_event_hook_with_data(profiler->thread, Fiber_Profiler_Capture_callback, self);
+	if (capture->track_calls) {
+		rb_thread_remove_event_hook_with_data(capture->thread, Fiber_Profiler_Capture_callback, self);
 	}
 }
 
 void Fiber_Profiler_Capture_resume(VALUE self) {
-	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
+	struct Fiber_Profiler_Capture *capture = Fiber_Profiler_Capture_get(self);
 	
-	if (profiler->capture) return;
-	profiler->capture = 1;
-	profiler->samples += 1;
+	if (capture->capture) return;
+	capture->capture = 1;
+	capture->samples += 1;
 	
-	if (profiler->track_calls) {
+	if (capture->track_calls) {
 		rb_event_flag_t event_flags = 0;
 		
 		// event_flags |= RUBY_EVENT_LINE;
@@ -497,8 +497,8 @@ void Fiber_Profiler_Capture_resume(VALUE self) {
 		event_flags |= RUBY_EVENT_B_CALL | RUBY_EVENT_B_RETURN;
 		
 		// CRuby will raise an exception if you try to add "INTERNAL_EVENT" hooks at the same time as other hooks, so we do it in two calls:
-		rb_thread_add_event_hook(profiler->thread, Fiber_Profiler_Capture_callback, event_flags, self);
-		rb_thread_add_event_hook(profiler->thread, Fiber_Profiler_Capture_callback, RUBY_INTERNAL_EVENT_GC_START | RUBY_INTERNAL_EVENT_GC_END_SWEEP, self);
+		rb_thread_add_event_hook(capture->thread, Fiber_Profiler_Capture_callback, event_flags, self);
+		rb_thread_add_event_hook(capture->thread, Fiber_Profiler_Capture_callback, RUBY_INTERNAL_EVENT_GC_START | RUBY_INTERNAL_EVENT_GC_END_SWEEP, self);
 	}
 }
 
@@ -509,65 +509,65 @@ void Fiber_Profiler_Capture_fiber_switch_callback(rb_event_flag_t event_flag, VA
 }
 
 VALUE Fiber_Profiler_Capture_start(VALUE self) {
-	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
+	struct Fiber_Profiler_Capture *capture = Fiber_Profiler_Capture_get(self);
 	
-	if (profiler->running) return Qfalse;
+	if (capture->running) return Qfalse;
 	
-	profiler->running = 1;
-	profiler->thread = rb_thread_current();
+	capture->running = 1;
+	capture->thread = rb_thread_current();
 	
-	Fiber_Profiler_Capture_reset(profiler);
-	Fiber_Profiler_Time_current(&profiler->start_time);
+	Fiber_Profiler_Capture_reset(capture);
+	Fiber_Profiler_Time_current(&capture->start_time);
 	
-	rb_thread_add_event_hook(profiler->thread, Fiber_Profiler_Capture_fiber_switch_callback, RUBY_EVENT_FIBER_SWITCH, self);
+	rb_thread_add_event_hook(capture->thread, Fiber_Profiler_Capture_fiber_switch_callback, RUBY_EVENT_FIBER_SWITCH, self);
 	
 	return self;
 }
 
 VALUE Fiber_Profiler_Capture_stop(VALUE self) {
-	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
+	struct Fiber_Profiler_Capture *capture = Fiber_Profiler_Capture_get(self);
 	
-	if (!profiler->running) return Qfalse;
+	if (!capture->running) return Qfalse;
 	
 	Fiber_Profiler_Capture_pause(self);
 	
-	rb_thread_remove_event_hook_with_data(profiler->thread, Fiber_Profiler_Capture_fiber_switch_callback, self);
+	rb_thread_remove_event_hook_with_data(capture->thread, Fiber_Profiler_Capture_fiber_switch_callback, self);
 	
-	profiler->running = 0;
-	profiler->thread = Qnil;
+	capture->running = 0;
+	capture->thread = Qnil;
 		
-	Fiber_Profiler_Time_current(&profiler->stop_time);
-	Fiber_Profiler_Capture_reset(profiler);
+	Fiber_Profiler_Time_current(&capture->stop_time);
+	Fiber_Profiler_Capture_reset(capture);
 	
 	return self;
 }
 
-void Fiber_Profiler_Capture_finish(struct Fiber_Profiler_Capture *profiler) {
+void Fiber_Profiler_Capture_finish(struct Fiber_Profiler_Capture *capture) {
 	struct timespec stop_time;
 	Fiber_Profiler_Time_current(&stop_time);
 	
-	struct Fiber_Profiler_Capture_Call *current = profiler->current;
+	struct Fiber_Profiler_Capture_Call *current = capture->current;
 	while (current) {
 		struct Fiber_Profiler_Capture_Call *parent = current->parent;
 		
 		current->duration = Fiber_Profiler_Time_delta(&current->enter_time, &stop_time);
 		
-		Fiber_Profiler_Capture_Call_finish(profiler, current);
+		Fiber_Profiler_Capture_Call_finish(capture, current);
 		
 		current = parent;
 	}
 }
 
-void Fiber_Profiler_Capture_print(struct Fiber_Profiler_Capture *profiler);
+void Fiber_Profiler_Capture_print(struct Fiber_Profiler_Capture *capture);
 
-int Fiber_Profiler_Capture_sample(struct Fiber_Profiler_Capture *profiler) {
+int Fiber_Profiler_Capture_sample(struct Fiber_Profiler_Capture *capture) {
 	VALUE fiber = Fiber_Profiler_Fiber_current();
 	
 	// We don't want to capture data from blocking fibers:
 	if (Fiber_Profiler_Fiber_blocking(fiber)) return 0;
 	
-	if (profiler->sample_rate < 1) {
-		return rand() < (RAND_MAX * profiler->sample_rate);
+	if (capture->sample_rate < 1) {
+		return rand() < (RAND_MAX * capture->sample_rate);
 	} else {
 		return 1;
 	}
@@ -575,49 +575,49 @@ int Fiber_Profiler_Capture_sample(struct Fiber_Profiler_Capture *profiler) {
 
 void Fiber_Profiler_Capture_fiber_switch(VALUE self)
 {
-	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
-	profiler->switches += 1;
+	struct Fiber_Profiler_Capture *capture = Fiber_Profiler_Capture_get(self);
+	capture->switches += 1;
 	
-	if (profiler->capture) {
-		Fiber_Profiler_Time_current(&profiler->stop_time);
-		double duration = Fiber_Profiler_Time_delta(&profiler->start_time, &profiler->stop_time);
+	if (capture->capture) {
+		Fiber_Profiler_Time_current(&capture->stop_time);
+		double duration = Fiber_Profiler_Time_delta(&capture->start_time, &capture->stop_time);
 		
 		Fiber_Profiler_Capture_pause(self);
 		
-		Fiber_Profiler_Capture_finish(profiler);
+		Fiber_Profiler_Capture_finish(capture);
 		
-		if (duration > profiler->stall_threshold) {
-			profiler->stalls += 1;
-			Fiber_Profiler_Capture_print(profiler);
+		if (duration > capture->stall_threshold) {
+			capture->stalls += 1;
+			Fiber_Profiler_Capture_print(capture);
 		}
 		
-		Fiber_Profiler_Capture_reset(profiler);
+		Fiber_Profiler_Capture_reset(capture);
 	}
 	
-	if (Fiber_Profiler_Capture_sample(profiler)) {
+	if (Fiber_Profiler_Capture_sample(capture)) {
 		// Reset the start time:
-		Fiber_Profiler_Time_current(&profiler->start_time);
+		Fiber_Profiler_Time_current(&capture->start_time);
 		
 		Fiber_Profiler_Capture_resume(self);
 	}
 }
 
 // When sampling a fiber, we may encounter returns without a preceeding call. This isn't an error, and we should correctly visualize the call stack. We track both the relative nesting (which can be negative) and the minimum nesting level encountered during the profiling session, and use that to determine the absolute nesting level of each call when printing the call stack.
-static size_t Fiber_Profiler_Capture_absolute_nesting(struct Fiber_Profiler_Capture *profiler, struct Fiber_Profiler_Capture_Call *call) {
-	return call->nesting - profiler->nesting_minimum;
+static size_t Fiber_Profiler_Capture_absolute_nesting(struct Fiber_Profiler_Capture *capture, struct Fiber_Profiler_Capture_Call *call) {
+	return call->nesting - capture->nesting_minimum;
 }
 
 // If a call is within this threshold of the parent call, it will be skipped when printing the call stack - it's considered inconsequential to the performance of the parent call.
 static const double Fiber_Profiler_Capture_SKIP_THRESHOLD = 0.98;
 
-void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *profiler, FILE *restrict stream) {
-	double total_duration = Fiber_Profiler_Time_delta(&profiler->start_time, &profiler->stop_time);
+void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *capture, FILE *restrict stream) {
+	double total_duration = Fiber_Profiler_Time_delta(&capture->start_time, &capture->stop_time);
 	
-	fprintf(stderr, "## Fiber stalled for %.3f seconds (switches=%zu, samples=%zu, stalls=%zu)\n", total_duration, profiler->switches, profiler->samples, profiler->stalls);
+	fprintf(stderr, "## Fiber stalled for %.3f seconds (switches=%zu, samples=%zu, stalls=%zu)\n", total_duration, capture->switches, capture->samples, capture->stalls);
 	
 	size_t skipped = 0;
 	
-	Fiber_Profiler_Deque_each(&profiler->calls, struct Fiber_Profiler_Capture_Call, call) {
+	Fiber_Profiler_Deque_each(&capture->calls, struct Fiber_Profiler_Capture_Call, call) {
 		if (call->children) {
 			if (call->parent && call->parent->children == 1) {
 				if (call->duration > call->parent->duration * Fiber_Profiler_Capture_SKIP_THRESHOLD) {
@@ -640,7 +640,7 @@ void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *profiler, F
 		if (skipped) {
 			fprintf(stream, "\e[2m");
 			
-			size_t nesting = Fiber_Profiler_Capture_absolute_nesting(profiler, call);
+			size_t nesting = Fiber_Profiler_Capture_absolute_nesting(capture, call);
 			for (size_t i = 0; i < nesting; i += 1) {
 				fputc('\t', stream);
 			}
@@ -651,12 +651,12 @@ void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *profiler, F
 			call->nesting += 1;
 		}
 		
-		size_t nesting = Fiber_Profiler_Capture_absolute_nesting(profiler, call);
+		size_t nesting = Fiber_Profiler_Capture_absolute_nesting(capture, call);
 		for (size_t i = 0; i < nesting; i += 1) {
 			fputc('\t', stream);
 		}
 		
-		if (Fiber_Profiler_Capture_Call_expensive_p(profiler, call, total_duration)) {
+		if (Fiber_Profiler_Capture_Call_expensive_p(capture, call, total_duration)) {
 			fprintf(stream, "\e[31m");
 		}
 		
@@ -664,7 +664,7 @@ void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *profiler, F
 		const char *name = rb_id2name(call->id);
 		
 		struct timespec offset;
-		Fiber_Profiler_Time_elapsed(&profiler->start_time, &call->enter_time, &offset);
+		Fiber_Profiler_Time_elapsed(&capture->start_time, &call->enter_time, &offset);
 		
 		fprintf(stream, "%s:%d in %s '%s#%s' (%0.4fs, T+" Fiber_Profiler_TIME_PRINTF_TIMESPEC ")\n", call->path, call->line, event_flag_name(call->event_flag), RSTRING_PTR(class_inspect), name, call->duration, Fiber_Profiler_TIME_PRINTF_TIMESPEC_ARGUMENTS(offset));
 		
@@ -682,8 +682,8 @@ void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *profiler, F
 	}
 }
 
-void Fiber_Profiler_Capture_print_json(struct Fiber_Profiler_Capture *profiler, FILE *restrict stream) {
-	double total_duration = Fiber_Profiler_Time_delta(&profiler->start_time, &profiler->stop_time);
+void Fiber_Profiler_Capture_print_json(struct Fiber_Profiler_Capture *capture, FILE *restrict stream) {
+	double total_duration = Fiber_Profiler_Time_delta(&capture->start_time, &capture->stop_time);
 	
 	fputc('{', stream);
 	
@@ -694,7 +694,7 @@ void Fiber_Profiler_Capture_print_json(struct Fiber_Profiler_Capture *profiler, 
 	fprintf(stream, ",\"calls\":[");
 	int first = 1;
 	
-	Fiber_Profiler_Deque_each(&profiler->calls, struct Fiber_Profiler_Capture_Call, call) {
+	Fiber_Profiler_Deque_each(&capture->calls, struct Fiber_Profiler_Capture_Call, call) {
 		if (call->children) {
 			if (call->parent && call->parent->children == 1) {
 				if (call->duration > call->parent->duration * Fiber_Profiler_Capture_SKIP_THRESHOLD) {
@@ -713,10 +713,10 @@ void Fiber_Profiler_Capture_print_json(struct Fiber_Profiler_Capture *profiler, 
 		VALUE class_inspect = rb_inspect(call->klass);
 		const char *name = rb_id2name(call->id);
 		
-		size_t nesting = Fiber_Profiler_Capture_absolute_nesting(profiler, call);
+		size_t nesting = Fiber_Profiler_Capture_absolute_nesting(capture, call);
 		
 		struct timespec offset;
-		Fiber_Profiler_Time_elapsed(&profiler->start_time, &call->enter_time, &offset);
+		Fiber_Profiler_Time_elapsed(&capture->start_time, &call->enter_time, &offset);
 		
 		fprintf(stream, "%s{\"path\":\"%s\",\"line\":%d,\"class\":\"%s\",\"method\":\"%s\",\"duration\":%0.6f,\"offset\":" Fiber_Profiler_TIME_PRINTF_TIMESPEC ",\"nesting\":%zu,\"skipped\":%zu,\"filtered\":%zu}", first ? "" : ",", call->path, call->line, RSTRING_PTR(class_inspect), name, call->duration, Fiber_Profiler_TIME_PRINTF_TIMESPEC_ARGUMENTS(offset), nesting, skipped, call->filtered);
 		
@@ -730,17 +730,17 @@ void Fiber_Profiler_Capture_print_json(struct Fiber_Profiler_Capture *profiler, 
 		fprintf(stream, ",\"skipped\":%zu", skipped);
 	}
 	
-	fprintf(stream, ",\"switches\":%zu,\"samples\":%zu,\"stalls\":%zu}\n", profiler->switches, profiler->samples, profiler->stalls);
+	fprintf(stream, ",\"switches\":%zu,\"samples\":%zu,\"stalls\":%zu}\n", capture->switches, capture->samples, capture->stalls);
 }
 
-void Fiber_Profiler_Capture_print(struct Fiber_Profiler_Capture *profiler) {
-	if (profiler->output == Qnil) return;
+void Fiber_Profiler_Capture_print(struct Fiber_Profiler_Capture *capture) {
+	if (capture->output == Qnil) return;
 	
-	FILE *stream = profiler->stream.file;
-	profiler->print(profiler, stream);
+	FILE *stream = capture->stream.file;
+	capture->print(capture, stream);
 	fflush(stream);
 	
-	rb_io_write(profiler->output, rb_str_new_static(profiler->stream.buffer, profiler->stream.size));
+	rb_io_write(capture->output, rb_str_new_static(capture->stream.buffer, capture->stream.size));
 	
 	fseek(stream, 0, SEEK_SET);
 }
@@ -748,33 +748,33 @@ void Fiber_Profiler_Capture_print(struct Fiber_Profiler_Capture *profiler) {
 #pragma mark - Accessors
 
 static VALUE Fiber_Profiler_Capture_stall_threshold_get(VALUE self) {
-	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
+	struct Fiber_Profiler_Capture *capture = Fiber_Profiler_Capture_get(self);
 	
-	return DBL2NUM(profiler->stall_threshold);
+	return DBL2NUM(capture->stall_threshold);
 }
 
 static VALUE Fiber_Profiler_Capture_filter_threshold_get(VALUE self) {
-	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
+	struct Fiber_Profiler_Capture *capture = Fiber_Profiler_Capture_get(self);
 	
-	return DBL2NUM(profiler->filter_threshold);
+	return DBL2NUM(capture->filter_threshold);
 }
 
 static VALUE Fiber_Profiler_Capture_track_calls_get(VALUE self) {
-	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
+	struct Fiber_Profiler_Capture *capture = Fiber_Profiler_Capture_get(self);
 	
-	return profiler->track_calls ? Qtrue : Qfalse;
+	return capture->track_calls ? Qtrue : Qfalse;
 }
 
 static VALUE Fiber_Profiler_Capture_stalls_get(VALUE self) {
-	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
+	struct Fiber_Profiler_Capture *capture = Fiber_Profiler_Capture_get(self);
 	
-	return SIZET2NUM(profiler->stalls);
+	return SIZET2NUM(capture->stalls);
 }
 
 static VALUE Fiber_Profiler_Capture_sample_rate_get(VALUE self) {
-	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
+	struct Fiber_Profiler_Capture *capture = Fiber_Profiler_Capture_get(self);
 	
-	return DBL2NUM(profiler->sample_rate);
+	return DBL2NUM(capture->sample_rate);
 }
 
 #pragma mark - Environment Variables
