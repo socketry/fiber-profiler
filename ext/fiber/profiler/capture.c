@@ -90,6 +90,15 @@ struct Fiber_Profiler_Capture {
 	// The stream buffer used for printing.
 	struct Fiber_Profiler_Stream stream;
 	
+	// How many fiber context switches have been encountered. Not all of them will be sampled, based on the sample rate.
+	size_t switches;
+
+	// How many samples have been taken, not all of them will be stalls, based on the stall threshold.
+	size_t samples;
+	
+	// The number of stalls encountered and printed.
+	size_t stalls;
+	
 	// Whether or not the profiler is currently running.
 	int running;
 	
@@ -98,9 +107,6 @@ struct Fiber_Profiler_Capture {
 	
 	// Whether or not to capture call data.
 	int capture;
-	
-	// The number of stalls encountered.
-	size_t stalls;
 	
 	// The start time of the profile.
 	struct timespec start_time;
@@ -241,11 +247,14 @@ VALUE Fiber_Profiler_Capture_allocate(VALUE klass) {
 	Fiber_Profiler_Stream_initialize(&profiler->stream);
 	profiler->output = Qnil;
 	
+	profiler->switches = 0;
+	profiler->samples = 0;
+	profiler->stalls = 0;
+	
 	profiler->running = 0;
 	profiler->thread = Qnil;
 	
 	profiler->capture = 0;
-	profiler->stalls = 0;
 	profiler->nesting = 0;
 	profiler->nesting_minimum = 0;
 	profiler->current = NULL;
@@ -464,32 +473,32 @@ void Fiber_Profiler_Capture_pause(VALUE self) {
 	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
 	
 	if (!profiler->capture) return;
-	
 	profiler->capture = 0;
 	
-	rb_thread_remove_event_hook_with_data(profiler->thread, Fiber_Profiler_Capture_callback, self);
+	if (profiler->track_calls) {
+		rb_thread_remove_event_hook_with_data(profiler->thread, Fiber_Profiler_Capture_callback, self);
+	}
 }
 
 void Fiber_Profiler_Capture_resume(VALUE self) {
 	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
 	
 	if (profiler->capture) return;
-	
 	profiler->capture = 1;
-	
-	rb_event_flag_t event_flags = 0;
+	profiler->samples += 1;
 	
 	if (profiler->track_calls) {
-		// event_flags |= RUBY_EVENT_LINE;
+		rb_event_flag_t event_flags = 0;
 		
+		// event_flags |= RUBY_EVENT_LINE;
 		event_flags |= RUBY_EVENT_CALL | RUBY_EVENT_RETURN;
 		event_flags |= RUBY_EVENT_C_CALL | RUBY_EVENT_C_RETURN;
 		event_flags |= RUBY_EVENT_B_CALL | RUBY_EVENT_B_RETURN;
+		
+		// CRuby will raise an exception if you try to add "INTERNAL_EVENT" hooks at the same time as other hooks, so we do it in two calls:
+		rb_thread_add_event_hook(profiler->thread, Fiber_Profiler_Capture_callback, event_flags, self);
+		rb_thread_add_event_hook(profiler->thread, Fiber_Profiler_Capture_callback, RUBY_INTERNAL_EVENT_GC_START | RUBY_INTERNAL_EVENT_GC_END_SWEEP, self);
 	}
-	
-	// CRuby will raise an exception if you try to add "INTERNAL_EVENT" hooks at the same time as other hooks, so we do it in two calls:
-	rb_thread_add_event_hook(profiler->thread, Fiber_Profiler_Capture_callback, event_flags, self);
-	rb_thread_add_event_hook(profiler->thread, Fiber_Profiler_Capture_callback, RUBY_INTERNAL_EVENT_GC_START | RUBY_INTERNAL_EVENT_GC_END_SWEEP, self);
 }
 
 void Fiber_Profiler_Capture_fiber_switch(VALUE self);
@@ -533,8 +542,6 @@ VALUE Fiber_Profiler_Capture_stop(VALUE self) {
 }
 
 void Fiber_Profiler_Capture_finish(struct Fiber_Profiler_Capture *profiler) {
-	profiler->capture = 0;
-	
 	struct timespec stop_time;
 	Fiber_Profiler_Time_current(&stop_time);
 	
@@ -568,10 +575,12 @@ int Fiber_Profiler_Capture_sample(struct Fiber_Profiler_Capture *profiler) {
 void Fiber_Profiler_Capture_fiber_switch(VALUE self)
 {
 	struct Fiber_Profiler_Capture *profiler = Fiber_Profiler_Capture_get(self);
-	Fiber_Profiler_Time_current(&profiler->stop_time);
-	double duration = Fiber_Profiler_Time_delta(&profiler->start_time, &profiler->stop_time);
+	profiler->switches += 1;
 	
 	if (profiler->capture) {
+		Fiber_Profiler_Time_current(&profiler->stop_time);
+		double duration = Fiber_Profiler_Time_delta(&profiler->start_time, &profiler->stop_time);
+		
 		Fiber_Profiler_Capture_pause(self);
 		
 		Fiber_Profiler_Capture_finish(profiler);
@@ -603,7 +612,7 @@ static const double Fiber_Profiler_Capture_SKIP_THRESHOLD = 0.98;
 void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *profiler, FILE *restrict stream) {
 	double total_duration = Fiber_Profiler_Time_delta(&profiler->start_time, &profiler->stop_time);
 	
-	fprintf(stderr, "## Fiber stalled for %.3f seconds ##\n", total_duration);
+	fprintf(stderr, "## Fiber stalled for %.3f seconds (switches=%zu, samples=%zu, stalls=%zu)\n", total_duration, profiler->switches, profiler->samples, profiler->stalls);
 	
 	size_t skipped = 0;
 	
@@ -720,7 +729,7 @@ void Fiber_Profiler_Capture_print_json(struct Fiber_Profiler_Capture *profiler, 
 		fprintf(stream, ",\"skipped\":%zu", skipped);
 	}
 	
-	fprintf(stream, "}\n");
+	fprintf(stream, ",\"switches\":%zu,\"samples\":%zu,\"stalls\":%zu}\n", profiler->switches, profiler->samples, profiler->stalls);
 }
 
 void Fiber_Profiler_Capture_print(struct Fiber_Profiler_Capture *profiler) {
