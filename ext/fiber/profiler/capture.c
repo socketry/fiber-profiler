@@ -586,11 +586,11 @@ void Fiber_Profiler_Capture_fiber_switch(VALUE self)
 	struct Fiber_Profiler_Capture *capture = Fiber_Profiler_Capture_get(self);
 	capture->switches += 1;
 	
-	// The time of the switch:
-	struct timespec switch_time;
-	Fiber_Profiler_Time_current(&switch_time);
-	
 	if (capture->capture) {
+		// The time of the switch (end):
+		struct timespec switch_time;
+		Fiber_Profiler_Time_current(&switch_time);
+	
 		// The duration of the sample:
 		double duration = Fiber_Profiler_Time_delta(&capture->switch_time, &switch_time);
 		
@@ -611,8 +611,8 @@ void Fiber_Profiler_Capture_fiber_switch(VALUE self)
 	}
 	
 	if (Fiber_Profiler_Capture_sample(capture)) {
-		// Save the time of the switch for the next sample:
-		capture->switch_time = switch_time;
+		// Capture the time of the switch (start):
+		Fiber_Profiler_Time_current(&capture->switch_time);
 		
 		// Start capturing data again:
 		Fiber_Profiler_Capture_resume(self);
