@@ -401,9 +401,10 @@ int Fiber_Profiler_Capture_Call_finish(struct Fiber_Profiler_Capture *profiler, 
 	return 0;
 }
 
+// Whether to highlight a call as expensive. This is purely cosmetic.
 static const double Fiber_Profiler_Capture_Call_EXPENSIVE_THRESHOLD = 0.2;
 
-int Fiber_Profiler_Capture_Call_expensive_p(struct Fiber_Profiler_Capture_Call *call, double total_duration) {
+int Fiber_Profiler_Capture_Call_expensive_p(struct Fiber_Profiler_Capture *profiler, struct Fiber_Profiler_Capture_Call *call, double total_duration) {
 	if (call->duration > total_duration * Fiber_Profiler_Capture_Call_EXPENSIVE_THRESHOLD) {
 		return 1;
 	}
@@ -655,7 +656,7 @@ void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *profiler, F
 			fputc('\t', stream);
 		}
 		
-		if (Fiber_Profiler_Capture_Call_expensive_p(call, total_duration)) {
+		if (Fiber_Profiler_Capture_Call_expensive_p(profiler, call, total_duration)) {
 			fprintf(stream, "\e[31m");
 		}
 		
