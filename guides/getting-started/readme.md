@@ -60,3 +60,13 @@ Set to `true` to track calls within the fiber. Default is `true`. This can be di
 ### `FIBER_PROFILER_CAPTURE_SAMPLE_RATE`
 
 Set the sample rate of the profiler as a percentage of all context switches. The default is 1.0 (100%).
+
+## Analyzing Logs
+
+If you collect your logs in a file (e.g. as `ndjson`) you can analyze them using the included `bake` commands:
+
+```bash
+$ bundle exec bake input --file samples.ndjson fiber:profiler:analyze output
+```
+
+This will aggregate all the call logs and generate a short summary, ordered by duration.
