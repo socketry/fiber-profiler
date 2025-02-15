@@ -372,6 +372,11 @@ int Fiber_Profiler_Capture_Call_finish(struct Fiber_Profiler_Capture *capture, s
 	// Don't filter calls if we're not running:
 	if (DEBUG_FILTERED) return 0;
 	
+	if (event_flag_return_p(call->event_flag)) {
+		// We don't filter return statements, as they are always part of the call stack:
+		return 0;
+	}
+	
 	if (call->duration < capture->filter_threshold) {
 		// We can only remove calls from the end of the deque, otherwise they might be referenced by other calls:
 		if (call == Fiber_Profiler_Deque_last(&capture->calls)) {
@@ -427,14 +432,20 @@ static void Fiber_Profiler_Capture_callback(rb_event_flag_t event_flag, VALUE da
 			struct Fiber_Profiler_Capture_Call *last_call = Fiber_Profiler_Deque_last(&capture->calls);
 			call = Fiber_Profiler_Capture_Call_new(capture, event_flag, id, klass);
 			
+			struct timespec call_time;
+			
 			if (last_call) {
-				call->enter_time = last_call->enter_time;
+				call_time = last_call->enter_time;
 			} else {
-				call->enter_time = capture->switch_time;
+				call_time = capture->switch_time;
 			}
+			
+			// For return statements, we record the current time as the enter time:
+			Fiber_Profiler_Time_current(&call->enter_time);
+			call->duration = Fiber_Profiler_Time_delta(&call_time, &call->enter_time);
+		} else {
+			call->duration = Fiber_Profiler_Time_delta_current(&call->enter_time);
 		}
-		
-		call->duration = Fiber_Profiler_Time_delta_current(&call->enter_time);
 		
 		capture->current = call->parent;
 		
@@ -617,7 +628,9 @@ static size_t Fiber_Profiler_Capture_absolute_nesting(struct Fiber_Profiler_Capt
 static const double Fiber_Profiler_Capture_SKIP_THRESHOLD = 0.98;
 
 void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *capture, FILE *restrict stream, double duration) {
-	fprintf(stderr, "## Fiber stalled for %.3f seconds (switches=%zu, samples=%zu, stalls=%zu start_time=" Fiber_Profiler_TIME_PRINTF_TIMESPEC ")\n", duration, capture->switches, capture->samples, capture->stalls, Fiber_Profiler_TIME_PRINTF_TIMESPEC_ARGUMENTS(capture->start_time));
+	double start_time = Fiber_Profiler_Time_delta(&capture->start_time, &capture->switch_time);
+	
+	fprintf(stderr, "## Fiber stalled for %.3f seconds (switches=%zu, samples=%zu, stalls=%zu, T+%0.3fs)\n", duration, capture->switches, capture->samples, capture->stalls, start_time);
 	
 	size_t skipped = 0;
 	
@@ -684,12 +697,18 @@ void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *capture, FI
 			fprintf(stream, "... filtered %zu direct calls ...\e[0m\n", call->filtered);
 		}
 	}
+	
+	if (skipped) {
+		fprintf(stream, "\e[2m... skipped %zu calls ...\e[0m\n", skipped);
+	}
 }
 
 void Fiber_Profiler_Capture_print_json(struct Fiber_Profiler_Capture *capture, FILE *restrict stream, double duration) {
+	double start_time = Fiber_Profiler_Time_delta(&capture->start_time, &capture->switch_time);
+	
 	fputc('{', stream);
 	
-	fprintf(stream, "\"start_time\":" Fiber_Profiler_TIME_PRINTF_TIMESPEC ",\"duration\":%0.6f", Fiber_Profiler_TIME_PRINTF_TIMESPEC_ARGUMENTS(capture->start_time), duration);
+	fprintf(stream, "\"start_time\":%0.3f,\"duration\":%0.6f", start_time, duration);
 	
 	size_t skipped = 0;
 	
