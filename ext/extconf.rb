@@ -9,12 +9,12 @@ require "mkmf"
 gem_name = File.basename(__dir__)
 extension_name = "Fiber_Profiler"
 
-$CFLAGS << " -Wall -Wno-unknown-pragmas -std=c99"
+append_cflags(["-Wall", "-Wno-unknown-pragmas", "-std=c99"])
 
 if ENV.key?("RUBY_DEBUG")
 	$stderr.puts "Enabling debug mode..."
 	
-	$CFLAGS << " -DRUBY_DEBUG -O0"
+	append_cflags(["-DRUBY_DEBUG", "-O0"])
 end
 
 $srcs = ["fiber/profiler/profiler.c", "fiber/profiler/time.c", "fiber/profiler/fiber.c", "fiber/profiler/capture.c"]
