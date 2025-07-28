@@ -754,14 +754,40 @@ void Fiber_Profiler_Capture_print_json(struct Fiber_Profiler_Capture *capture, F
 	fprintf(stream, ",\"switches\":%zu,\"samples\":%zu,\"stalls\":%zu}\n", capture->switches, capture->samples, capture->stalls);
 }
 
+VALUE output_write(RB_BLOCK_CALL_FUNC_ARGLIST(yielded_arg, data))
+{
+	struct Fiber_Profiler_Capture *capture = (struct Fiber_Profiler_Capture*)data;
+	
+	// Actually perform the write to IO here.
+	rb_io_write(
+		capture->output,
+		rb_str_new_static(capture->stream.buffer, capture->stream.size)
+	);
+	
+	return Qnil;
+}
+
 void Fiber_Profiler_Capture_print(struct Fiber_Profiler_Capture *capture, double duration) {
+	static VALUE Fiber = Qnil;
+	
+	if (Fiber == Qnil) {
+		Fiber = rb_const_get(rb_cObject, rb_intern("Fiber"));
+	}
+	
 	if (capture->output == Qnil) return;
 	
 	FILE *stream = capture->stream.file;
 	capture->print(capture, stream, duration);
 	fflush(stream);
 	
-	rb_io_write(capture->output, rb_str_new_static(capture->stream.buffer, capture->stream.size));
+	// Do the actual write in Fiber.blocking.
+	rb_block_call(
+		Fiber,
+		rb_intern("blocking"),
+		0, NULL, // no args
+		output_write,
+		(VALUE)capture
+	);
 	
 	fseek(stream, 0, SEEK_SET);
 }
