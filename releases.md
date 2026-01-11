@@ -1,5 +1,9 @@
 # Releases
 
+## Unreleased
+
+  - Fixed compatibility with `Process.fork`.
+
 ## v0.1.3
 
   - Improved performance when not profiling (when sampling is enabled).
