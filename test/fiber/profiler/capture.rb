@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 # Released under the MIT License.
-# Copyright, 2025, by Samuel Williams.
+# Copyright, 2025-2026, by Samuel Williams.
 
 require "fiber/profiler/capture"
 require "json"
@@ -13,7 +13,7 @@ describe Fiber::Profiler::Capture do
 	after do
 		@capture&.stop
 	end
-
+	
 	with "#stall_threshold" do
 		it "should return the stall threshold" do
 			expect(capture).to have_attributes(

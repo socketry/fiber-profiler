@@ -17,7 +17,7 @@ Instrument your code using the default profiler:
 ```ruby
 #!/usr/bin/env ruby
 
-require 'fiber/profiler'
+require "fiber/profiler"
 
 profiler = Fiber::Profiler.default
 
