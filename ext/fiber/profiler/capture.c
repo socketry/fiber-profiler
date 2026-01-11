@@ -181,8 +181,6 @@ static void Fiber_Profiler_Capture_compact(void *ptr) {
 static void Fiber_Profiler_Capture_free(void *ptr) {
 	struct Fiber_Profiler_Capture *capture = (struct Fiber_Profiler_Capture*)ptr;
 	
-	RUBY_ASSERT(capture->running == 0);
-	
 	Fiber_Profiler_Stream_free(&capture->stream);
 	Fiber_Profiler_Deque_free(&capture->calls);
 	
