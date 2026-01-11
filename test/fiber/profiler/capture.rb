@@ -8,11 +8,15 @@ require "json"
 
 describe Fiber::Profiler::Capture do
 	let(:output) {StringIO.new}
-	let(:profiler) {subject.new(stall_threshold: 0.0001, output: output)}
+	let(:capture) {subject.new(stall_threshold: 0.0001, output: output)}
 	
+	after do
+		@capture&.stop
+	end
+
 	with "#stall_threshold" do
 		it "should return the stall threshold" do
-			expect(profiler).to have_attributes(
+			expect(capture).to have_attributes(
 				stall_threshold: be == 0.0001
 			)
 		end
@@ -20,23 +24,23 @@ describe Fiber::Profiler::Capture do
 	
 	with "#track_calls" do
 		it "should return true by default" do
-			expect(profiler).to have_attributes(
+			expect(capture).to have_attributes(
 				track_calls: be == true
 			)
 		end
 	end
 	
 	with "#sample_rate" do
-		let(:profiler) {subject.new(stall_threshold: 0.0001, sample_rate: 0.1, output: output)}
+		let(:capture) {subject.new(stall_threshold: 0.0001, sample_rate: 0.1, output: output)}
 		
 		it "should return the sample rate" do
-			expect(profiler).to have_attributes(
+			expect(capture).to have_attributes(
 				sample_rate: be == 0.1
 			)
 		end
 		
 		it "should sample at the given rate" do
-			profiler.start
+			capture.start
 			
 			100.times do
 				Fiber.new do
@@ -44,9 +48,9 @@ describe Fiber::Profiler::Capture do
 				end.resume
 			end
 			
-			profiler.stop
+			capture.stop
 			
-			expect(profiler).to have_attributes(
+			expect(capture).to have_attributes(
 				stalls: (be >= 1).and(be <= 50)
 			)
 		end
@@ -54,15 +58,15 @@ describe Fiber::Profiler::Capture do
 	
 	with "#start" do
 		it "should start profiling" do
-			profiler.start
+			capture.start
 			
 			Fiber.new do
 				sleep 0.001
 			end.resume
 			
-			profiler.stop
+			capture.stop
 			
-			expect(profiler).to have_attributes(
+			expect(capture).to have_attributes(
 				stalls: be >= 1
 			)
 			
@@ -89,7 +93,7 @@ describe Fiber::Profiler::Capture do
 		end
 		
 		it "can profile more complex call stacks" do
-			profiler.start
+			capture.start
 			
 			2.times do
 				Fiber.new do
@@ -107,24 +111,24 @@ describe Fiber::Profiler::Capture do
 				end.resume
 			end
 			
-			profiler.stop
+			capture.stop
 			
-			expect(profiler).to have_attributes(
+			expect(capture).to have_attributes(
 				stalls: be == 2
 			)
 		end
 		
 		it "can detect garbage collection stalls" do
-			profiler.start
+			capture.start
 			
 			Fiber.new do
 				GC.start
 				sleep(0.001)
 			end.resume
 			
-			profiler.stop
+			capture.stop
 			
-			expect(profiler).to have_attributes(
+			expect(capture).to have_attributes(
 				stalls: be == 1
 			)
 			
