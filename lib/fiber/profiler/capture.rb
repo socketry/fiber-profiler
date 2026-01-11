@@ -37,6 +37,7 @@ module Fiber::Profiler
 	
 	private_constant :ThreadLocalCapture
 	
+	# Represents a running profiler capture.
 	class Capture
 		prepend ThreadLocalCapture
 	end
