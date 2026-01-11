@@ -139,4 +139,50 @@ describe Fiber::Profiler::Capture do
 			))
 		end
 	end
+	
+	with "Process.fork" do
+		it "should disable the profiler in the child process after fork" do
+			capture.start
+			
+			# Verify profiler is running in parent - thread-local should be set
+			expect(Thread.current.fiber_profiler_capture).to be == capture
+			
+			# Verify start returns false when already running
+			expect(capture.start).to be == false
+			
+			# Fork and verify behavior in child
+			pid = fork do
+				# In child process: profiler should be stopped by fork handler
+				exit(1) unless Thread.current.fiber_profiler_capture.nil?
+				
+				# Verify stop returns false when not running
+				exit(2) unless capture.stop == false
+				
+				# Verify we can start again in child if needed
+				exit(3) unless capture.start
+				exit(4) unless Thread.current.fiber_profiler_capture == capture
+				
+				# Exit child process successfully
+				exit(0)
+			end
+			
+			# Wait for child to complete and check exit status
+			_, status = Process.wait2(pid)
+			expect(status.exitstatus).to be == 0
+			
+			# In parent process: profiler should still be running
+			expect(Thread.current.fiber_profiler_capture).to be == capture
+			
+			# Verify profiling still works in parent
+			Fiber.new do
+				sleep 0.001
+			end.resume
+			
+			capture.stop
+			
+			# After stop: profiler should be stopped and thread-local cleared
+			expect(Thread.current.fiber_profiler_capture).to be_nil
+			expect(capture.stop).to be == false
+		end
+	end
 end
