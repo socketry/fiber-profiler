@@ -18,7 +18,7 @@ Please see the [project documentation](https://socketry.github.io/fiber-profiler
 
 Please see the [project releases](https://socketry.github.io/fiber-profiler/releases/index) for all releases.
 
-### Unreleased
+### v0.6.0
 
   - Fixed compatibility with `Process.fork`.
 

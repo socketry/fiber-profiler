@@ -1,6 +1,6 @@
 # Releases
 
-## Unreleased
+## v0.6.0
 
   - Fixed compatibility with `Process.fork`.
 
