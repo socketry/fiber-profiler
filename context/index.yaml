@@ -1,0 +1,11 @@
+# Automatically generated context index for Utopia::Project guides.
+# Do not edit then files in this directory directly, instead edit the guides and then run `bake utopia:project:agent:context:update`.
+---
+description: A fiber stall profiler.
+metadata:
+  documentation_uri: https://socketry.github.io/fiber-profiler/
+  source_code_uri: https://github.com/socketry/fiber-profiler.git
+files:
+- path: getting-started.md
+  title: Getting Started
+  description: This guide explains how to detect stalls using the fiber profiler.

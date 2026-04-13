@@ -20,10 +20,10 @@ Gem::Specification.new do |spec|
 		"source_code_uri" => "https://github.com/socketry/fiber-profiler.git",
 	}
 	
-	spec.files = Dir["{ext,lib}/**/*", "*.md", base: __dir__]
+	spec.files = Dir["{bake,context,ext,lib}/**/*", "*.md", base: __dir__]
 	spec.require_paths = ["lib"]
 	
 	spec.extensions = ["ext/extconf.rb"]
 	
-	spec.required_ruby_version = ">= 3.2"
+	spec.required_ruby_version = ">= 3.3"
 end

@@ -18,6 +18,10 @@ Please see the [project documentation](https://socketry.github.io/fiber-profiler
 
 Please see the [project releases](https://socketry.github.io/fiber-profiler/releases/index) for all releases.
 
+### Unreleased
+
+  - Fixed compatibility with `Process.fork`.
+
 ### v0.1.3
 
   - Improved performance when not profiling (when sampling is enabled).
@@ -35,6 +39,22 @@ We welcome contributions to this project.
 3.  Commit your changes (`git commit -am 'Add some feature'`).
 4.  Push to the branch (`git push origin my-new-feature`).
 5.  Create new Pull Request.
+
+### Running Tests
+
+To run the test suite:
+
+``` shell
+bundle exec sus
+```
+
+### Making Releases
+
+To make a new release:
+
+``` shell
+bundle exec bake gem:release:patch # or minor or major
+```
 
 ### Developer Certificate of Origin
 
