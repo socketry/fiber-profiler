@@ -27,7 +27,4 @@ module Fiber::Profiler
 	end
 	
 	private_constant :ForkHandler
-	
-	# Hook into Process._fork to handle fork events automatically:
-	::Process.singleton_class.prepend(ForkHandler)
 end

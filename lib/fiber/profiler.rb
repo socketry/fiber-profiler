@@ -4,8 +4,7 @@
 # Copyright, 2025-2026, by Samuel Williams.
 
 require_relative "profiler/version"
-require_relative "profiler/native"
-require_relative "profiler/fork_handler"
+require_relative "profiler/capture"
 
 module Fiber::Profiler
 	# The default profiler to use, if any.
