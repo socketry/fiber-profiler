@@ -12,7 +12,11 @@ Migrating existing applications to the event loop can be tricky. One of the most
 
 Please see the [project documentation](https://socketry.github.io/fiber-profiler/) for more details.
 
-  - [Getting Started](https://socketry.github.io/fiber-profiler/guides/getting-started/index) - This guide explains how to detect stalls using the fiber profiler.
+  - [Getting Started](https://socketry.github.io/fiber-profiler/guides/getting-started/index) - This guide explains how to install the fiber profiler and choose a mode for diagnosing event-loop stalls.
+
+  - [Watchdog Mode](https://socketry.github.io/fiber-profiler/guides/watchdog-mode/index) - This guide explains how to sample ongoing fiber stalls with the watchdog profiler.
+
+  - [Capture Mode](https://socketry.github.io/fiber-profiler/guides/capture-mode/index) - This guide explains how to trace fiber execution and analyze call timings with the capture profiler.
 
 ## Releases
 

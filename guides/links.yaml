@@ -1,2 +1,6 @@
 getting-started:
   order: 0
+watchdog-mode:
+  order: 1
+capture-mode:
+  order: 2
