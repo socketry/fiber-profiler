@@ -60,7 +60,7 @@ To prepare a release branch and open a pull request from an up-to-date `main`:
 bundle exec bake gem:github:release:patch # or minor or major
 ```
 
-After the release PR is merged, GitHub Actions publishes the verified gem through the `rubygems` environment, with approval from `socketry/managers`. See [bake-gem-github](https://github.com/socketry/bake-gem-github) for setup, remote releases, and recovery.
+After the release PR is merged, GitHub Actions automatically publishes the verified gem through the `rubygems` environment. See [bake-gem-github](https://github.com/socketry/bake-gem-github) for setup, remote releases, and recovery.
 
 ### Developer Certificate of Origin
 
