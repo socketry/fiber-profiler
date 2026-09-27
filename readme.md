@@ -18,7 +18,7 @@ Please see the [project documentation](https://socketry.github.io/fiber-profiler
 
 Please see the [project releases](https://socketry.github.io/fiber-profiler/releases/index) for all releases.
 
-### Unreleased
+### v0.7.0
 
   - Sign releases with the Socketry Ruby Gems certificate.
 

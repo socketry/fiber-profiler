@@ -1,6 +1,6 @@
 # Releases
 
-## Unreleased
+## v0.7.0
 
   - Sign releases with the Socketry Ruby Gems certificate.
 
