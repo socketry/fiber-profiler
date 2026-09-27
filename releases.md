@@ -1,5 +1,9 @@
 # Releases
 
+## Unreleased
+
+  - Sign releases with the Socketry Ruby Gems certificate.
+
 ## v0.6.0
 
   - Fixed compatibility with `Process.fork`.
