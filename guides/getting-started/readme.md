@@ -103,9 +103,13 @@ Both values must be finite and positive. Actual sampling intervals depend on Rub
 
 For explicit instrumentation, use `Fiber::Profiler::Watchdog.new(stall_threshold: 0.5, sample_interval: 0.1, max_samples: 5, output: $stderr)` and the same `start`/`stop` lifecycle as capture. The output must support writes from the watchdog thread. Stop the profiler before closing its output.
 
+If sampling or reporting raises a `StandardError`, the watchdog disables its tracepoint and stops sampling. It retains the exception in `watchdog.error` and attempts one warning to standard error. Failure to write that warning is also contained. These errors do not escape through `stop` or replace application errors. Call `stop` normally to finish cleanup; a subsequent `start` clears the error and resumes monitoring.
+
 ### Interpretation and Limits
 
 Repeated frames identify code worth investigating: optimize expensive work, add cooperative yield points, or offload suitable work to a bounded thread pool. Sampling still has overhead; measure it for your workload.
+
+The repository includes a [Falcon overhead benchmark](https://github.com/socketry/fiber-profiler/tree/main/benchmark/falcon) comparing disabled, watchdog, and capture modes. It measures throughput, latency, server CPU time, and Ruby allocations across repeated runs. Use it as a starting point for measuring your own application before enabling continuous monitoring.
 
 The watchdog requires Ruby thread scheduling. Native code that holds the GVL without allowing other threads to run can prevent sampling entirely. Short stalls can occur between samples, and normal scheduler/OS delays can extend measured execution time. A report is a diagnostic lead, not proof that every sampled frame is expensive.
 

@@ -42,6 +42,7 @@ module Fiber::Profiler
 			@output = output
 			@running = false
 			@stalls = 0
+			@error = nil
 		end
 		
 		# @attribute [Float] The minimum execution duration before reporting a stall.
@@ -52,6 +53,9 @@ module Fiber::Profiler
 		
 		# @attribute [Integer] The number of reports written.
 		attr_reader :stalls
+		
+		# @attribute [StandardError | Nil] The sampling or reporting failure, retained until monitoring starts again.
+		attr_reader :error
 		
 		# Start monitoring application fibers on the calling thread.
 		# @returns [Watchdog | false] Self, or false if already running.
@@ -64,6 +68,7 @@ module Fiber::Profiler
 			@condition = ConditionVariable.new
 			@running = true
 			@execution = nil
+			@error = nil
 			
 			# When started on the event loop, distinguish it from blocking application fibers:
 			@loop = Fiber.current if Fiber.current.blocking?
@@ -152,6 +157,18 @@ module Fiber::Profiler
 					next_report = duration + @stall_threshold
 				end
 			end
+		rescue StandardError => error
+			# A diagnostic failure must not escape into the monitored application:
+			@error = error
+			@tracepoint.disable
+			warn_failure(error)
+		end
+		
+		def warn_failure(error)
+			warn "Fiber::Profiler::Watchdog disabled: #{error.class}: #{error.message}"
+		rescue StandardError
+			# The diagnostic destination may also be unavailable; retain the original error:
+			nil
 		end
 		
 		def report(fiber, duration, samples)

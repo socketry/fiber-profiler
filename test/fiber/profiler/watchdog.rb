@@ -183,6 +183,69 @@ describe Fiber::Profiler::Watchdog do
 		Fiber.set_scheduler(nil)
 	end
 	
+	[false, true].each do |warning_fails|
+		it "contains reporting failures when warning output #{warning_fails ? "fails" : "works"}" do
+			notifications = Queue.new
+			failure = IOError.new("Report destination unavailable")
+			attempts = 0
+			output.define_singleton_method(:write) do |message|
+				attempts += 1
+				raise failure
+			end
+			
+			diagnostics = StringIO.new
+			diagnostics.define_singleton_method(:write) do |message|
+				notifications << message
+				raise IOError, "Warning destination unavailable" if warning_fails
+				super(message)
+			end
+			previous_stderr = $stderr
+			$stderr = diagnostics
+			threads = Thread.list
+			workload_failure = RuntimeError.new("Workload failed")
+			
+			scheduler = Async::Scheduler.new(profiler: watchdog)
+			Fiber.set_scheduler(scheduler)
+			task = scheduler.run(finished: false) do
+				message = Fiber.blocking{notifications.pop(timeout: 10)}
+				expect(message).to be =~ /Watchdog disabled: IOError: Report destination unavailable/
+				
+				# Further switches must not invoke the disabled instrumentation:
+				def watchdog.record_execution
+					raise "Watchdog still monitoring after failure"
+				end
+				result = Fiber.new{:continued}.resume
+				raise workload_failure if warning_fails
+				result
+			end
+			if warning_fails
+				expect{task.wait}.to raise_exception(RuntimeError, message: be == "Workload failed")
+			else
+				expect(task.wait).to be == :continued
+			end
+			expect(watchdog.error).to be_equal(failure)
+			expect(attempts).to be == 1
+			expect(Thread.current.fiber_profiler_capture).to be_nil
+			expect(Thread.list).to be == threads
+			watchdog.singleton_class.remove_method(:record_execution)
+			Fiber.set_scheduler(nil)
+			
+			# Explicit restart clears the error and resumes sampling:
+			output.define_singleton_method(:write) do |message|
+				super(message)
+				notifications << :reported
+			end
+			watchdog.start
+			expect(watchdog.error).to be_nil
+			expect(Fiber.new{notifications.pop(timeout: 10)}.resume).to be == :reported
+			watchdog.stop
+			expect(watchdog.stalls).to be >= 1
+		ensure
+			Fiber.set_scheduler(nil)
+			$stderr = previous_stderr
+		end
+	end
+	
 	it "disables inherited monitoring after fork and can restart in the child" do
 		watchdog.start
 		pid = fork do
