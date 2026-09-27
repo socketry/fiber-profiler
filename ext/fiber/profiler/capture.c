@@ -184,7 +184,7 @@ static void Fiber_Profiler_Capture_free(void *ptr) {
 	Fiber_Profiler_Stream_free(&capture->stream);
 	Fiber_Profiler_Deque_free(&capture->calls);
 	
-	free(capture);
+	xfree(capture);
 }
 
 static size_t Fiber_Profiler_Capture_memsize(const void *ptr) {
@@ -271,7 +271,9 @@ VALUE Fiber_Profiler_Capture_initialize(int argc, VALUE *argv, VALUE self) {
 	
 	VALUE arguments[5] = {0};
 	VALUE options = Qnil;
-	rb_scan_args(argc, argv, ":", &options);
+	if (argc > 0) {
+		rb_scan_args(argc, argv, ":", &options);
+	}
 	rb_get_kwargs(options, Fiber_Profiler_Capture_initialize_options, 0, 5, arguments);
 	
 	if (arguments[0] != Qundef) {

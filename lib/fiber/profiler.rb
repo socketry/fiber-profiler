@@ -9,11 +9,25 @@ require_relative "profiler/capture"
 module Fiber::Profiler
 	# The default profiler to use, if any.
 	#
-	# Use the `FIBER_PROFILER_CAPTURE=true` environment variable to enable profiling.
+	# Set `FIBER_PROFILER` to `watchdog`, `capture`, or `false`. When unset,
+	# the legacy `FIBER_PROFILER_CAPTURE=true` setting enables capture mode.
 	#
-	# @returns [Capture | Nil]
+	# @returns [Capture | Watchdog | Nil]
+	# @raises [ArgumentError] If the requested mode is unknown.
 	def self.default
-		Capture.default
+		case mode = ENV["FIBER_PROFILER"]
+		when nil
+			Capture.default
+		when "capture"
+			Capture.new
+		when "watchdog"
+			require_relative "profiler/watchdog"
+			Watchdog.default
+		when "false"
+			nil
+		else
+			raise ArgumentError, "Unknown FIBER_PROFILER mode: #{mode.inspect} (expected watchdog, capture, or false)"
+		end
 	end
 	
 	# Execute the given block with the {default} profiler, if any.
