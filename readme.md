@@ -18,6 +18,10 @@ Please see the [project documentation](https://socketry.github.io/fiber-profiler
 
 Please see the [project releases](https://socketry.github.io/fiber-profiler/releases/index) for all releases.
 
+### Unreleased
+
+  - Sign releases with the Socketry Ruby Gems certificate.
+
 ### v0.6.0
 
   - Fixed compatibility with `Process.fork`.
@@ -50,11 +54,13 @@ bundle exec sus
 
 ### Making Releases
 
-To make a new release:
+To prepare a release branch and open a pull request from an up-to-date `main`:
 
 ``` shell
-bundle exec bake gem:release:patch # or minor or major
+bundle exec bake gem:github:release:patch # or minor or major
 ```
+
+After the release PR is merged, GitHub Actions publishes the verified gem through the `rubygems` environment, with approval from `socketry/managers`. See [bake-gem-github](https://github.com/socketry/bake-gem-github) for setup, remote releases, and recovery.
 
 ### Developer Certificate of Origin
 

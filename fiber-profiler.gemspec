@@ -11,7 +11,7 @@ Gem::Specification.new do |spec|
 	spec.license = "MIT"
 	
 	spec.cert_chain  = ["release.cert"]
-	spec.signing_key = File.expand_path("~/.gem/release.pem")
+	spec.signing_key = File.expand_path("~/.gem/socketry-release.pem")
 	
 	spec.homepage = "https://github.com/socketry/fiber-profiler"
 	
@@ -20,7 +20,7 @@ Gem::Specification.new do |spec|
 		"source_code_uri" => "https://github.com/socketry/fiber-profiler.git",
 	}
 	
-	spec.files = Dir["{bake,context,ext,lib}/**/*", "*.md", base: __dir__]
+	spec.files = Dir["{bake,context,ext,lib}/**/*", "*.md", "release.cert", base: __dir__]
 	spec.require_paths = ["lib"]
 	
 	spec.extensions = ["ext/extconf.rb"]
