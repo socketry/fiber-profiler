@@ -8,4 +8,13 @@ metadata:
 files:
 - path: getting-started.md
   title: Getting Started
-  description: This guide explains how to detect stalls using the fiber profiler.
+  description: This guide explains how to install the fiber profiler and choose a
+    mode for diagnosing event-loop stalls.
+- path: watchdog-mode.md
+  title: Watchdog Mode
+  description: This guide explains how to sample ongoing fiber stalls with the watchdog
+    profiler.
+- path: capture-mode.md
+  title: Capture Mode
+  description: This guide explains how to trace fiber execution and analyze call timings
+    with the capture profiler.
