@@ -26,4 +26,6 @@ Gem::Specification.new do |spec|
 	spec.extensions = ["ext/extconf.rb"]
 	
 	spec.required_ruby_version = ">= 3.3"
+	
+	spec.add_dependency "json"
 end
