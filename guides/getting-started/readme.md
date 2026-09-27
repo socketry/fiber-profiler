@@ -41,10 +41,3 @@ With Async, including Falcon, the scheduler starts and stops the selected profil
 Unknown modes raise `ArgumentError`. Set environment variables before loading the gem: the native capture settings are read when the extension loads. The new mode selector and watchdog settings are read when `Fiber::Profiler.default` is called.
 
 Each scheduler obtains its own profiler, so schedulers in separate worker processes or threads are monitored independently. After `fork`, inherited profiling is stopped in the child; a new scheduler starts a new profiler normally.
-
-## Next Steps
-
-- [Watchdog Mode](../watchdog-mode/index): reproduce a stall, configure stack sampling, and interpret ongoing reports.
-- [Capture Mode](../capture-mode/index): trace calls, control sampling overhead, and aggregate timing logs.
-
-Both guides include manual `start`/`stop` examples for code outside Async. Use those examples when your application manages fibers directly.
