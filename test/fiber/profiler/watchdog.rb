@@ -59,13 +59,42 @@ describe Fiber::Profiler::Watchdog do
 		expect(reports.first["samples"].first["backtrace"].join).to be =~ /watchdog.rb/
 	end
 	
+	def first_stall(notification)
+		notification.pop(timeout: 10)
+	end
+	
+	def second_stall(notification)
+		notification.pop(timeout: 10)
+	end
+	
 	it "does not mix stacks from different fiber executions" do
-		watchdog.start
-		5.times do
-			Fiber.new{sleep 0.01}.resume
+		first_report = Queue.new
+		second_report = Queue.new
+		first = Fiber.new{first_stall(first_report)}
+		second = Fiber.new{second_stall(second_report)}
+		notifications = {first.object_id => first_report, second.object_id => second_report}
+		
+		output.define_singleton_method(:write) do |message|
+			report = JSON.parse(message)
+			notifications.fetch(report["fiber_id"]) << report
+			super(message)
 		end
+		
+		# Retain enough samples to expose stacks leaking from the previous execution:
+		@watchdog = subject.new(stall_threshold: 0.03, sample_interval: 0.005, max_samples: 100, output: output)
+		watchdog.start
+		expect(first.resume).not.to be_nil
+		expect(second.resume).not.to be_nil
 		watchdog.stop
-		expect(reports).to be == []
+		
+		markers = {first.object_id => /first_stall/, second.object_id => /second_stall/}
+		expect(reports.map{|report| report["fiber_id"]}.uniq).to be == markers.keys
+		reports.each do |report|
+			expect(report["samples"].size).to be >= 1
+			report["samples"].each do |sample|
+				expect(sample["backtrace"].join).to be =~ markers.fetch(report["fiber_id"])
+			end
+		end
 	end
 	
 	it "monitors blocking application fibers when started on the event loop" do
