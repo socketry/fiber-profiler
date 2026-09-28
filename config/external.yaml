@@ -1,0 +1,5 @@
+async:
+  url: https://github.com/socketry/async
+  command: bundle exec sus
+  extra:
+    - $LOAD_PATH << ::File.expand_path("../../ext", __dir__)
