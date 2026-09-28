@@ -42,29 +42,29 @@ Please see the [project releases](https://socketry.github.io/fiber-profiler/rele
 
 We welcome contributions to this project.
 
-1.  Fork it.
+1.  Fork the repository.
 2.  Create your feature branch (`git checkout -b my-new-feature`).
-3.  Commit your changes (`git commit -am 'Add some feature'`).
+3.  Commit your changes (`git commit -am 'Add some feature.'`).
 4.  Push to the branch (`git push origin my-new-feature`).
-5.  Create new Pull Request.
+5.  Create a new pull request.
 
 ### Running Tests
 
 To run the test suite:
 
-``` shell
-bundle exec sus
+``` bash
+$ bundle exec sus
 ```
 
 ### Making Releases
 
-To prepare a release branch and open a pull request from an up-to-date `main`:
+To make a new release:
 
-``` shell
-bundle exec bake gem:github:release:patch # or minor or major
+``` bash
+$ bundle exec bake gem:github:release:patch # or minor or major
 ```
 
-After the release PR is merged, GitHub Actions automatically publishes the verified gem through the `rubygems` environment. See [bake-gem-github](https://github.com/socketry/bake-gem-github) for setup, remote releases, and recovery.
+See [bake-gem-github](https://github.com/socketry/bake-gem-github) for setup and release instructions.
 
 ### Developer Certificate of Origin
 

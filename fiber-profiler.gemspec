@@ -16,11 +16,13 @@ Gem::Specification.new do |spec|
 	spec.homepage = "https://github.com/socketry/fiber-profiler"
 	
 	spec.metadata = {
+		"bug_tracker_uri" => "https://github.com/socketry/fiber-profiler/issues",
+		"changelog_uri" => "https://github.com/socketry/fiber-profiler/blob/main/releases.md",
 		"documentation_uri" => "https://socketry.github.io/fiber-profiler/",
 		"source_code_uri" => "https://github.com/socketry/fiber-profiler.git",
 	}
 	
-	spec.files = Dir["{bake,context,ext,lib}/**/*", "*.md", "release.cert", base: __dir__]
+	spec.files = Dir["{bake,context,ext,lib}/**/*", "*.md", base: __dir__]
 	spec.require_paths = ["lib"]
 	
 	spec.extensions = ["ext/extconf.rb"]
