@@ -139,7 +139,7 @@ describe Fiber::Profiler::Capture do
 			))
 		end
 	end
-
+	
 	with "hidden classes" do
 		let(:capture) {subject.new(stall_threshold: 0, filter_threshold: 0, output: output)}
 		
