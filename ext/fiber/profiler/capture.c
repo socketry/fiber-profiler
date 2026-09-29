@@ -627,6 +627,15 @@ static size_t Fiber_Profiler_Capture_absolute_nesting(struct Fiber_Profiler_Capt
 // If a call is within this threshold of the parent call, it will be skipped when printing the call stack - it's considered inconsequential to the performance of the parent call.
 static const double Fiber_Profiler_Capture_SKIP_THRESHOLD = 0.98;
 
+// Hidden classes (e.g. the singleton class of RubyVM::FrozenCore, which implements lambda literals) raise NotImplementedError from #inspect, so we use their class path instead:
+static VALUE Fiber_Profiler_Capture_Call_class_inspect(struct Fiber_Profiler_Capture_Call *call) {
+	if (!RB_SPECIAL_CONST_P(call->klass) && RBASIC_CLASS(call->klass) == 0) {
+		return rb_class_path(call->klass);
+	}
+	
+	return rb_inspect(call->klass);
+}
+
 void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *capture, FILE *restrict stream, double duration) {
 	double start_time = Fiber_Profiler_Time_delta(&capture->start_time, &capture->switch_time);
 	
@@ -677,7 +686,7 @@ void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *capture, FI
 			fprintf(stream, "\e[31m");
 		}
 		
-		VALUE class_inspect = rb_inspect(call->klass);
+		VALUE class_inspect = Fiber_Profiler_Capture_Call_class_inspect(call);
 		const char *name = rb_id2name(call->id);
 		
 		struct timespec offset;
@@ -731,7 +740,7 @@ void Fiber_Profiler_Capture_print_json(struct Fiber_Profiler_Capture *capture, F
 			call->nesting = call->parent->nesting + 1;
 		}
 		
-		VALUE class_inspect = rb_inspect(call->klass);
+		VALUE class_inspect = Fiber_Profiler_Capture_Call_class_inspect(call);
 		const char *name = rb_id2name(call->id);
 		
 		size_t nesting = Fiber_Profiler_Capture_absolute_nesting(capture, call);
