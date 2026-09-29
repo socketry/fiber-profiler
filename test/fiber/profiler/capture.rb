@@ -185,6 +185,29 @@ describe Fiber::Profiler::Capture do
 		end
 	end
 	
+	with "blocks outside of methods" do
+		# Blocks defined outside of a method don't have a method or class:
+		work = proc do
+			String.new
+			[1, 2].each{sleep 0.001}
+		end
+		
+		it "doesn't report a class left over from an earlier call" do
+			capture.start
+			
+			Fiber.new(&work).resume
+			
+			capture.stop
+			
+			stall = JSON.parse(output.string)
+			classes = stall["calls"].map{|call| call["class"]}
+			
+			expect(classes).to have_value(be == "nil")
+			expect(classes).not.to have_value(be == "String")
+			expect(classes).not.to have_value(be == "false")
+		end
+	end
+	
 	with "Process.fork" do
 		it "should disable the profiler in the child process after fork" do
 			capture.start
