@@ -2,6 +2,7 @@
 
 # Released under the MIT License.
 # Copyright, 2025-2026, by Samuel Williams.
+# Copyright, 2026, by Trevor Turk.
 
 require "fiber/profiler/capture"
 require "json"

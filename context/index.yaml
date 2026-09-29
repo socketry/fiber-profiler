@@ -3,6 +3,8 @@
 ---
 description: A fiber stall profiler.
 metadata:
+  bug_tracker_uri: https://github.com/socketry/fiber-profiler/issues
+  changelog_uri: https://github.com/socketry/fiber-profiler/blob/main/releases.md
   documentation_uri: https://socketry.github.io/fiber-profiler/
   source_code_uri: https://github.com/socketry/fiber-profiler.git
 files:
