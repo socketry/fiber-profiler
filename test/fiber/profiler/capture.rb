@@ -140,6 +140,51 @@ describe Fiber::Profiler::Capture do
 		end
 	end
 	
+	with "hidden classes" do
+		let(:capture) {subject.new(stall_threshold: 0, filter_threshold: 0, output: output)}
+		
+		it "can report garbage collection inside methods of hidden classes" do
+			capture.start
+			
+			Fiber.new do
+				GC.stress = true
+				
+				# Lambda literals call a method on the hidden singleton class of RubyVM::FrozenCore:
+				->{}
+			ensure
+				GC.stress = false
+			end.resume
+			
+			capture.stop
+			
+			stall = JSON.parse(output.string)
+			calls = stall["calls"]
+			expect(calls).to have_value(have_keys(
+				"class" => be =~ /\A#<Class:0x\h+>\z/,
+				"method" => be == "lambda",
+			))
+		end
+	end
+	
+	with "singleton classes" do
+		it "reports the singleton class by name" do
+			capture.start
+			
+			Fiber.new do
+				Kernel.sleep 0.001
+			end.resume
+			
+			capture.stop
+			
+			stall = JSON.parse(output.string)
+			calls = stall["calls"]
+			expect(calls).to have_value(have_keys(
+				"class" => be == "#<Class:Kernel>",
+				"method" => be == "sleep",
+			))
+		end
+	end
+	
 	with "Process.fork" do
 		it "should disable the profiler in the child process after fork" do
 			capture.start
