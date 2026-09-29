@@ -140,6 +140,7 @@ void Fiber_Profiler_Capture_Call_initialize(void *element) {
 	
 	call->event_flag = 0;
 	call->id = 0;
+	call->klass = Qnil;
 	
 	call->path = NULL;
 	call->line = 0;
