@@ -627,6 +627,27 @@ static size_t Fiber_Profiler_Capture_absolute_nesting(struct Fiber_Profiler_Capt
 // If a call is within this threshold of the parent call, it will be skipped when printing the call stack - it's considered inconsequential to the performance of the parent call.
 static const double Fiber_Profiler_Capture_SKIP_THRESHOLD = 0.98;
 
+static VALUE Fiber_Profiler_Capture_class_path(VALUE klass) {
+	// Included modules are represented by hidden ICLASS objects:
+	if (RB_TYPE_P(klass, T_ICLASS)) {
+		klass = RBASIC_CLASS(klass);
+	}
+	
+	if (RB_TYPE_P(klass, T_CLASS)) {
+		// `rb_class_path` reads the class path directly, and supports hidden classes:
+		return rb_class_path(klass);
+	}
+	
+	if (RB_TYPE_P(klass, T_MODULE)) {
+		// A hidden module has no Ruby-level class, so it has no usable class path:
+		if (!RBASIC_CLASS(klass)) return rb_str_new_cstr("<hidden module>");
+		
+		return rb_class_path(klass);
+	}
+	
+	return rb_str_new_cstr("<unknown>");
+}
+
 void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *capture, FILE *restrict stream, double duration) {
 	double start_time = Fiber_Profiler_Time_delta(&capture->start_time, &capture->switch_time);
 	
@@ -677,13 +698,13 @@ void Fiber_Profiler_Capture_print_tty(struct Fiber_Profiler_Capture *capture, FI
 			fprintf(stream, "\e[31m");
 		}
 		
-		VALUE class_inspect = rb_inspect(call->klass);
+		VALUE class_path = Fiber_Profiler_Capture_class_path(call->klass);
 		const char *name = rb_id2name(call->id);
 		
 		struct timespec offset;
 		Fiber_Profiler_Time_elapsed(&capture->switch_time, &call->enter_time, &offset);
 		
-		fprintf(stream, "%s:%d in %s '%s#%s' (%0.4fs, T+" Fiber_Profiler_TIME_PRINTF_TIMESPEC ")\n", call->path, call->line, event_flag_name(call->event_flag), RSTRING_PTR(class_inspect), name, call->duration, Fiber_Profiler_TIME_PRINTF_TIMESPEC_ARGUMENTS(offset));
+		fprintf(stream, "%s:%d in %s '%s#%s' (%0.4fs, T+" Fiber_Profiler_TIME_PRINTF_TIMESPEC ")\n", call->path, call->line, event_flag_name(call->event_flag), RSTRING_PTR(class_path), name, call->duration, Fiber_Profiler_TIME_PRINTF_TIMESPEC_ARGUMENTS(offset));
 		
 		fprintf(stream, "\e[0m");
 		
@@ -731,7 +752,7 @@ void Fiber_Profiler_Capture_print_json(struct Fiber_Profiler_Capture *capture, F
 			call->nesting = call->parent->nesting + 1;
 		}
 		
-		VALUE class_inspect = rb_inspect(call->klass);
+		VALUE class_path = Fiber_Profiler_Capture_class_path(call->klass);
 		const char *name = rb_id2name(call->id);
 		
 		size_t nesting = Fiber_Profiler_Capture_absolute_nesting(capture, call);
@@ -739,7 +760,7 @@ void Fiber_Profiler_Capture_print_json(struct Fiber_Profiler_Capture *capture, F
 		struct timespec offset;
 		Fiber_Profiler_Time_elapsed(&capture->switch_time, &call->enter_time, &offset);
 		
-		fprintf(stream, "%s{\"path\":\"%s\",\"line\":%d,\"class\":\"%s\",\"method\":\"%s\",\"duration\":%0.6f,\"offset\":" Fiber_Profiler_TIME_PRINTF_TIMESPEC ",\"nesting\":%zu,\"skipped\":%zu,\"filtered\":%zu}", first ? "" : ",", call->path, call->line, RSTRING_PTR(class_inspect), name, call->duration, Fiber_Profiler_TIME_PRINTF_TIMESPEC_ARGUMENTS(offset), nesting, skipped, call->filtered);
+		fprintf(stream, "%s{\"path\":\"%s\",\"line\":%d,\"class\":\"%s\",\"method\":\"%s\",\"duration\":%0.6f,\"offset\":" Fiber_Profiler_TIME_PRINTF_TIMESPEC ",\"nesting\":%zu,\"skipped\":%zu,\"filtered\":%zu}", first ? "" : ",", call->path, call->line, RSTRING_PTR(class_path), name, call->duration, Fiber_Profiler_TIME_PRINTF_TIMESPEC_ARGUMENTS(offset), nesting, skipped, call->filtered);
 		
 		skipped = 0;
 		first = 0;
