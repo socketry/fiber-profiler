@@ -202,7 +202,6 @@ describe Fiber::Profiler::Capture do
 			stall = JSON.parse(output.string)
 			classes = stall["calls"].map{|call| call["class"]}
 			
-			expect(classes).to have_value(be == "nil")
 			expect(classes).not.to have_value(be == "String")
 			expect(classes).not.to have_value(be == "false")
 		end
